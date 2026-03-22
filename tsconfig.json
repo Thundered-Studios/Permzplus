@@ -8,7 +8,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "outDir": "./dist",
-    "rootDir": "./src"
+    "skipLibCheck": true
   },
   "include": ["src", "adapters", "tests"],
   "exclude": ["node_modules", "dist", "examples"]
