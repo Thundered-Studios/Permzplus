@@ -185,6 +185,93 @@ import { PermissionDeniedError, UnknownRoleError, InvalidPermissionError } from 
 
 ---
 
+## Next.js Middleware
+
+```ts
+// middleware.ts
+import { NextResponse } from 'next/server'
+import type { NextRequest } from 'next/server'
+import { PolicyEngine } from 'permzplus'
+import { nextjsGuard } from 'permzplus/guard'
+
+const policy = new PolicyEngine()
+
+const adminGuard = nextjsGuard(policy, 'admin:panel', (req) => {
+  return req.cookies.get('role')?.value
+})
+
+export function middleware(req: NextRequest) {
+  if (req.nextUrl.pathname.startsWith('/admin')) {
+    const blocked = adminGuard(req)
+    if (blocked) return blocked
+  }
+  return NextResponse.next()
+}
+```
+
+---
+
+## Database Integration
+
+Permzplus can persist roles and permissions to any database via adapters.
+
+### Prisma
+
+Add the required models to your schema (see `examples/prisma-adapter/schema.prisma`), then:
+
+```ts
+import { PrismaClient } from '@prisma/client'
+import { PolicyEngine } from 'permzplus'
+import { PrismaAdapter } from 'permzplus/adapters/prisma'
+
+const prisma = new PrismaClient()
+const policy = await PolicyEngine.fromAdapter(new PrismaAdapter(prisma))
+```
+
+Built-in roles are seeded to the database automatically on first run.
+
+### Mongoose
+
+```ts
+import mongoose from 'mongoose'
+import { PolicyEngine } from 'permzplus'
+import { MongooseAdapter } from 'permzplus/adapters/mongoose'
+
+await mongoose.connect(process.env.MONGO_URI)
+const policy = await PolicyEngine.fromAdapter(new MongooseAdapter(mongoose))
+```
+
+### Drizzle
+
+```ts
+import { drizzle } from 'drizzle-orm/node-postgres'
+import { PolicyEngine } from 'permzplus'
+import { DrizzleAdapter } from 'permzplus/adapters/drizzle'
+
+const db = drizzle(connectionString)
+const tables = { roles: permzRoles, permissions: permzPermissions }
+const policy = await PolicyEngine.fromAdapter(new DrizzleAdapter(db, tables))
+```
+
+### Custom Adapter
+
+Implement the `PermzAdapter` interface:
+
+```ts
+import type { PermzAdapter, RoleDefinition } from 'permzplus'
+
+class MyAdapter implements PermzAdapter {
+  async getRoles(): Promise<RoleDefinition[]> { ... }
+  async getPermissions(role: string): Promise<string[]> { ... }
+  async saveRole(role: RoleDefinition): Promise<void> { ... }
+  async deleteRole(role: string): Promise<void> { ... }
+  async grantPermission(role: string, permission: string): Promise<void> { ... }
+  async revokePermission(role: string, permission: string): Promise<void> { ... }
+}
+```
+
+---
+
 ## License
 
 MIT
