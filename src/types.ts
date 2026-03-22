@@ -25,3 +25,12 @@ export interface PermzAdapter {
   grantPermission(role: string, permission: string): Promise<void>
   revokePermission(role: string, permission: string): Promise<void>
 }
+
+/** Minimal interface exposed to PermissionContext — avoids circular imports. */
+export interface IPolicyEngine {
+  can(role: string, permission: string): boolean
+  cannot(role: string, permission: string): boolean
+  assert(role: string, permission: string): void
+  getRoleLevel(role: string): number
+  isAtLeast(role: string, minRole: string): boolean
+}
