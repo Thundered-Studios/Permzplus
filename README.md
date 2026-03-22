@@ -1,2 +1,2 @@
-# Permz-
+# Permz+
 A permissions framework
