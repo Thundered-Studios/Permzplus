@@ -58,3 +58,50 @@ export function expressGuard(
     }
   }
 }
+
+/**
+ * Creates a Next.js middleware-style guard that enforces a single permission.
+ * Extracts the role from the request using `getRoleFromReq` (if provided) or
+ * falls back to `req.cookies?.get?.('role')?.value` then `req.headers?.get?.('x-role')`.
+ *
+ * - Returns a `Response` with status 401 if no role can be determined.
+ * - Returns a `Response` with status 403 if the role lacks the required permission.
+ * - Returns `null` to signal that the request should be allowed through (continue).
+ *
+ * @param engine - Any object implementing `IPolicyEngine`.
+ * @param permission - The permission string to enforce on every request.
+ * @param getRoleFromReq - Optional function to extract a role string from the request object.
+ * @returns A function `(req: unknown) => Response | null` for use in Next.js middleware.
+ */
+export function nextjsGuard(
+  engine: IPolicyEngine,
+  permission: string,
+  getRoleFromReq?: (req: unknown) => string | undefined
+): (req: unknown) => Response | null {
+  return function (req: unknown): Response | null {
+    const role =
+      getRoleFromReq?.(req) ??
+      (req as any).cookies?.get?.('role')?.value ??
+      (req as any).headers?.get?.('x-role')
+
+    if (!role) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    try {
+      engine.assert(role, permission)
+      return null
+    } catch (err) {
+      if (err instanceof PermissionDeniedError) {
+        return new Response(JSON.stringify({ error: 'Forbidden' }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw err
+    }
+  }
+}
