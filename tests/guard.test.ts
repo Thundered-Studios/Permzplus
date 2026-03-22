@@ -8,7 +8,12 @@ describe('createGuard', () => {
   let guard: (opts: { role: string; permission: string }) => boolean
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({
+      roles: [
+        { name: 'USER', level: 0, permissions: ['posts:read'] },
+        { name: 'ADMIN', level: 80, permissions: ['users:ban'] },
+      ],
+    })
     guard = createGuard(policy)
   })
 
@@ -31,7 +36,12 @@ describe('expressGuard', () => {
   let next: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({
+      roles: [
+        { name: 'USER', level: 0, permissions: ['posts:read'] },
+        { name: 'ADMIN', level: 80, permissions: ['users:ban'] },
+      ],
+    })
     res = {
       status: vi.fn().mockReturnThis(),
       json: vi.fn().mockReturnThis(),

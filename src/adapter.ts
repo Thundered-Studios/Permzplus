@@ -23,6 +23,7 @@ export class InMemoryAdapter extends BaseAdapter {
 
   async saveRole(role: RoleDefinition): Promise<void> {
     this.roles.set(role.name, role)
+    this.permissions.set(role.name, new Set(role.permissions))
   }
 
   async deleteRole(role: string): Promise<void> {

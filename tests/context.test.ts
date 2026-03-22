@@ -8,7 +8,13 @@ describe('PermissionContext', () => {
   let ctx: PermissionContext
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({
+      roles: [
+        { name: 'USER', level: 0, permissions: ['posts:read'] },
+        { name: 'MODERATOR', level: 40, permissions: ['posts:delete'] },
+        { name: 'ADMIN', level: 80, permissions: ['users:ban'] },
+      ],
+    })
     ctx = policy.createContext('MODERATOR', { userId: '42' })
   })
 

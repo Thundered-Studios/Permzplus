@@ -13,12 +13,6 @@ export class PolicyEngine implements IPolicyEngine {
     this.roles = new Map()
     this.denies = new Map()
 
-    // Load all built-in roles (spread to avoid mutation)
-    for (const role of BUILT_IN_ROLES) {
-      this.roles.set(role.name, { ...role, permissions: [...role.permissions] })
-    }
-
-    // Merge in user-supplied roles (can override built-ins but not delete them)
     if (options?.roles) {
       for (const role of options.roles) {
         this.roles.set(role.name, { ...role, permissions: [...role.permissions] })
@@ -180,9 +174,9 @@ export class PolicyEngine implements IPolicyEngine {
     this.roles.set(role.name, { ...role, permissions: [...role.permissions] })
 
     // Fire-and-forget adapter persistence
-    this.adapter?.saveRole(role).catch(() => {})
+    this.adapter?.saveRole(role)
     for (const perm of role.permissions) {
-      this.adapter?.grantPermission(role.name, perm).catch(() => {})
+      this.adapter?.grantPermission(role.name, perm)
     }
 
     return this
@@ -211,7 +205,7 @@ export class PolicyEngine implements IPolicyEngine {
     }
 
     // Fire-and-forget adapter persistence
-    this.adapter?.grantPermission(role, permission).catch(() => {})
+    this.adapter?.grantPermission(role, permission)
 
     return this
   }
@@ -238,7 +232,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.get(role)!.add(permission)
 
     // Fire-and-forget adapter persistence
-    this.adapter?.revokePermission(role, permission).catch(() => {})
+    this.adapter?.revokePermission(role, permission)
 
     return this
   }

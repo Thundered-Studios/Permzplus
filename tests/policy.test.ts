@@ -1,12 +1,22 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { PolicyEngine } from '../src/policy'
 import { PermissionDeniedError, UnknownRoleError, InvalidPermissionError } from '../src/errors'
+import type { RoleDefinition } from '../src/types'
 
-describe('PolicyEngine — built-in roles loaded by default', () => {
+const TEST_ROLES: RoleDefinition[] = [
+  { name: 'GUEST', level: 0, permissions: ['posts:read'] },
+  { name: 'USER', level: 20, permissions: ['posts:write', 'comments:read', 'comments:write'] },
+  { name: 'MODERATOR', level: 40, permissions: ['posts:delete', 'comments:delete', 'users:warn'] },
+  { name: 'DEVELOPER', level: 60, permissions: ['admin:debug', 'admin:logs'] },
+  { name: 'ADMIN', level: 80, permissions: ['users:ban', 'users:delete', 'admin:panel'] },
+  { name: 'SUPER_ADMIN', level: 100, permissions: ['*'] },
+]
+
+describe('PolicyEngine — roles loaded via options.roles', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('GUEST can posts:read', () => {
@@ -31,11 +41,15 @@ describe('PolicyEngine — custom roles via options.roles', () => {
 
   beforeEach(() => {
     policy = new PolicyEngine({
-      roles: [{ name: 'TESTER', level: 15, permissions: ['tests:run'] }],
+      roles: [
+        { name: 'BASE', level: 0, permissions: ['posts:read'] },
+        { name: 'WRITER', level: 20, permissions: ['posts:write'] },
+        { name: 'TESTER', level: 15, permissions: ['tests:run'] },
+      ],
     })
   })
 
-  it('TESTER can posts:read (inherited from GUEST at level 0)', () => {
+  it('TESTER can posts:read (inherited from BASE at level 0)', () => {
     expect(policy.can('TESTER', 'posts:read')).toBe(true)
   })
 
@@ -43,14 +57,17 @@ describe('PolicyEngine — custom roles via options.roles', () => {
     expect(policy.can('TESTER', 'tests:run')).toBe(true)
   })
 
-  it('TESTER cannot posts:write (USER is level 20, TESTER is 15)', () => {
+  it('TESTER cannot posts:write (WRITER is level 20, TESTER is 15)', () => {
     expect(policy.can('TESTER', 'posts:write')).toBe(false)
   })
 })
 
 describe('PolicyEngine — extra permissions via options.permissions', () => {
   it('GUEST can extra:action when added via options.permissions', () => {
-    const policy = new PolicyEngine({ permissions: { GUEST: ['extra:action'] } })
+    const policy = new PolicyEngine({
+      roles: [{ name: 'GUEST', level: 0, permissions: ['posts:read'] }],
+      permissions: { GUEST: ['extra:action'] },
+    })
     expect(policy.can('GUEST', 'extra:action')).toBe(true)
   })
 })
@@ -59,7 +76,7 @@ describe('PolicyEngine — cannot', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('USER cannot users:ban', () => {
@@ -75,7 +92,7 @@ describe('PolicyEngine — assert', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('does not throw when ADMIN asserts users:ban', () => {
@@ -91,7 +108,7 @@ describe('PolicyEngine — getRoleLevel', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('returns 0 for GUEST', () => {
@@ -111,7 +128,7 @@ describe('PolicyEngine — isAtLeast', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('ADMIN isAtLeast MODERATOR is true', () => {
@@ -127,7 +144,7 @@ describe('PolicyEngine — addRole', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
     policy.addRole({ name: 'VIP', level: 25, permissions: ['vip:access'] })
   })
 
@@ -149,7 +166,7 @@ describe('PolicyEngine — grantTo', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('GUEST can extra:perm after grantTo', () => {
@@ -175,7 +192,7 @@ describe('PolicyEngine — denyFrom', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('DEVELOPER cannot admin:panel after denyFrom', () => {
@@ -198,7 +215,7 @@ describe('PolicyEngine — error cases', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('can("NONEXISTENT", ...) throws UnknownRoleError', () => {
@@ -214,7 +231,7 @@ describe('PolicyEngine — createContext', () => {
   let policy: PolicyEngine
 
   beforeEach(() => {
-    policy = new PolicyEngine()
+    policy = new PolicyEngine({ roles: TEST_ROLES })
   })
 
   it('returns an object with can, cannot, assert, isAtLeast', () => {

@@ -44,24 +44,26 @@ describe('InMemoryAdapter', () => {
 })
 
 describe('PolicyEngine.fromAdapter', () => {
-  it('seeds built-in roles — adapter includes GUEST after fromAdapter', async () => {
-    const adapter = new InMemoryAdapter()
-    await PolicyEngine.fromAdapter(adapter)
-    const roles = await adapter.getRoles()
-    expect(roles.some((r) => r.name === 'GUEST')).toBe(true)
-  })
-
-  it('SUPER_ADMIN can anything:ever after fromAdapter', async () => {
+  it('engine starts empty when adapter has no roles', async () => {
     const adapter = new InMemoryAdapter()
     const policy = await PolicyEngine.fromAdapter(adapter)
-    expect(policy.can('SUPER_ADMIN', 'anything:ever')).toBe(true)
+    const roles = await adapter.getRoles()
+    expect(roles).toHaveLength(0)
+    expect(() => policy.can('GUEST', 'posts:read')).toThrow()
   })
 
-  it('custom role saved to adapter before fromAdapter is loaded into the engine', async () => {
+  it('role saved to adapter before fromAdapter is loaded into the engine', async () => {
     const adapter = new InMemoryAdapter()
     await adapter.saveRole({ name: 'CUSTOM', level: 5, permissions: ['custom:action'] })
-    await adapter.grantPermission('CUSTOM', 'custom:action')
     const policy = await PolicyEngine.fromAdapter(adapter)
     expect(policy.can('CUSTOM', 'custom:action')).toBe(true)
+  })
+
+  it('permissions granted to adapter before fromAdapter are loaded into the engine', async () => {
+    const adapter = new InMemoryAdapter()
+    await adapter.saveRole({ name: 'EDITOR', level: 10, permissions: [] })
+    await adapter.grantPermission('EDITOR', 'posts:write')
+    const policy = await PolicyEngine.fromAdapter(adapter)
+    expect(policy.can('EDITOR', 'posts:write')).toBe(true)
   })
 })
