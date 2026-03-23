@@ -31,27 +31,59 @@ export class PermissionContext {
 
   /**
    * Returns `true` if the bound role has the given permission.
-   * Delegates to `engine.can(role, permission)`.
+   * An optional `condition` function can enforce resource-level rules on top of
+   * the role check — if provided, both the permission check AND the condition
+   * must pass for `can` to return `true`.
+   *
+   * @example
+   * // Resource-ownership check
+   * ctx.can('posts:edit', () => post.authorId === ctx.userId)
    */
-  can(permission: string): boolean {
-    return this.engine.can(this.role, permission)
+  can(permission: string, condition?: () => boolean): boolean {
+    const hasPermission = this.engine.can(this.role, permission)
+    if (!hasPermission) return false
+    if (condition !== undefined) return condition()
+    return true
   }
 
   /**
-   * Returns `true` if the bound role does NOT have the given permission.
-   * Delegates to `engine.cannot(role, permission)`.
+   * Returns `true` if the bound role does NOT have the given permission,
+   * or if the optional condition fails.
    */
-  cannot(permission: string): boolean {
-    return this.engine.cannot(this.role, permission)
+  cannot(permission: string, condition?: () => boolean): boolean {
+    return !this.can(permission, condition)
   }
 
   /**
-   * Asserts that the bound role has the given permission.
-   * Throws a `PermissionDeniedError` if the role lacks the permission.
-   * Delegates to `engine.assert(role, permission)`.
+   * Asserts that the bound role has the given permission (and that the optional
+   * condition passes). Throws a `PermissionDeniedError` if either check fails.
    */
-  assert(permission: string): void {
-    this.engine.assert(this.role, permission)
+  assert(permission: string, condition?: () => boolean): void {
+    if (!this.can(permission, condition)) {
+      throw new PermissionDeniedError(this.role, permission)
+    }
+  }
+
+  /**
+   * Returns `true` if the bound role has ALL of the given permissions.
+   * An optional `condition` is evaluated only when all permission checks pass.
+   */
+  canAll(permissions: string[], condition?: () => boolean): boolean {
+    const allPass = this.engine.canAll(this.role, permissions)
+    if (!allPass) return false
+    if (condition !== undefined) return condition()
+    return true
+  }
+
+  /**
+   * Returns `true` if the bound role has AT LEAST ONE of the given permissions.
+   * An optional `condition` is evaluated only when at least one permission check passes.
+   */
+  canAny(permissions: string[], condition?: () => boolean): boolean {
+    const anyPass = this.engine.canAny(this.role, permissions)
+    if (!anyPass) return false
+    if (condition !== undefined) return condition()
+    return true
   }
 
   /**

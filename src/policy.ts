@@ -1,17 +1,19 @@
 import type { PolicyOptions, ContextOptions, RoleDefinition, PermzAdapter, IPolicyEngine } from './types'
-import { BUILT_IN_ROLES } from './roles'
-import { PermissionDeniedError, UnknownRoleError, InvalidPermissionError } from './errors'
+import { BUILT_IN_ROLES, BUILT_IN_ROLE_NAMES } from './roles'
+import { PermissionDeniedError, UnknownRoleError, InvalidPermissionError, BuiltInRoleError } from './errors'
 import { validatePermission, matchesPermission } from './permissions'
 import { PermissionContext } from './context'
 
 export class PolicyEngine implements IPolicyEngine {
   private roles: Map<string, RoleDefinition>
   private denies: Map<string, Set<string>>
+  private groups: Map<string, string[]>
   private adapter?: PermzAdapter
 
   constructor(options?: PolicyOptions) {
     this.roles = new Map()
     this.denies = new Map()
+    this.groups = new Map()
 
     if (options?.roles) {
       for (const role of options.roles) {
@@ -26,9 +28,12 @@ export class PolicyEngine implements IPolicyEngine {
         if (!def) {
           throw new UnknownRoleError(roleName)
         }
-        // Dedupe: add only permissions not already present
+        // Validate and dedupe
         const existing = new Set(def.permissions)
         for (const perm of perms) {
+          if (!validatePermission(perm)) {
+            throw new InvalidPermissionError(perm)
+          }
           if (!existing.has(perm)) {
             def.permissions.push(perm)
             existing.add(perm)
@@ -39,11 +44,29 @@ export class PolicyEngine implements IPolicyEngine {
   }
 
   /**
+   * Registers a named permission group — a reusable set of permissions that
+   * can be referenced from any role definition via the `groups` array.
+   *
+   * @throws {InvalidPermissionError} If any permission string is malformed.
+   * @returns `this` for chaining.
+   */
+  defineGroup(name: string, permissions: string[]): this {
+    for (const perm of permissions) {
+      if (!validatePermission(perm)) {
+        throw new InvalidPermissionError(perm)
+      }
+    }
+    this.groups.set(name, [...permissions])
+    return this
+  }
+
+  /**
    * Computes the full set of permissions for a role by collecting permissions
    * from all roles whose level is less than or equal to this role's level
-   * (hierarchical inheritance), then subtracting any explicit denies for the role.
+   * (hierarchical inheritance), expanding any referenced permission groups,
+   * then subtracting any explicit denies for the role.
    */
-  private getEffectivePermissions(role: string): Set<string> {
+  private resolveEffectivePermissions(role: string): Set<string> {
     const def = this.roles.get(role)
     if (!def) {
       throw new UnknownRoleError(role)
@@ -57,14 +80,31 @@ export class PolicyEngine implements IPolicyEngine {
         for (const perm of roleDef.permissions) {
           effective.add(perm)
         }
+        // Expand permission groups attached to this role
+        if (roleDef.groups) {
+          for (const groupName of roleDef.groups) {
+            const groupPerms = this.groups.get(groupName)
+            if (groupPerms) {
+              for (const perm of groupPerms) {
+                effective.add(perm)
+              }
+            }
+          }
+        }
       }
     }
 
     // Remove explicitly denied permissions for this role
     const denied = this.denies.get(role)
     if (denied) {
-      for (const perm of denied) {
-        effective.delete(perm)
+      for (const deniedPerm of denied) {
+        // Remove any pattern in effective that would match the denied permission,
+        // and also remove exact strings so wildcard denies work correctly.
+        for (const pattern of [...effective]) {
+          if (matchesPermission(deniedPerm, pattern) || pattern === deniedPerm) {
+            effective.delete(pattern)
+          }
+        }
       }
     }
 
@@ -87,7 +127,7 @@ export class PolicyEngine implements IPolicyEngine {
       throw new InvalidPermissionError(permission)
     }
 
-    const effective = this.getEffectivePermissions(role)
+    const effective = this.resolveEffectivePermissions(role)
     for (const pattern of effective) {
       if (matchesPermission(permission, pattern)) {
         return true
@@ -121,6 +161,26 @@ export class PolicyEngine implements IPolicyEngine {
   }
 
   /**
+   * Returns `true` if the given role has ALL of the specified permissions.
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @throws {InvalidPermissionError} If any permission string is malformed.
+   */
+  canAll(role: string, permissions: string[]): boolean {
+    return permissions.every((perm) => this.can(role, perm))
+  }
+
+  /**
+   * Returns `true` if the given role has AT LEAST ONE of the specified permissions.
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @throws {InvalidPermissionError} If any permission string is malformed.
+   */
+  canAny(role: string, permissions: string[]): boolean {
+    return permissions.some((perm) => this.can(role, perm))
+  }
+
+  /**
    * Returns the numeric level of the given role.
    *
    * @throws {UnknownRoleError} If the role is not registered.
@@ -141,6 +201,23 @@ export class PolicyEngine implements IPolicyEngine {
    */
   isAtLeast(role: string, minRole: string): boolean {
     return this.getRoleLevel(role) >= this.getRoleLevel(minRole)
+  }
+
+  /**
+   * Returns all registered role definitions.
+   */
+  listRoles(): RoleDefinition[] {
+    return Array.from(this.roles.values()).map((r) => ({ ...r, permissions: [...r.permissions] }))
+  }
+
+  /**
+   * Returns the full effective permission set for a role — all inherited
+   * permissions and group expansions, minus any explicit denies.
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   */
+  getPermissions(role: string): string[] {
+    return Array.from(this.resolveEffectivePermissions(role))
   }
 
   /**
@@ -178,6 +255,29 @@ export class PolicyEngine implements IPolicyEngine {
     for (const perm of role.permissions) {
       this.adapter?.grantPermission(role.name, perm)
     }
+
+    return this
+  }
+
+  /**
+   * Removes a custom role from the engine. Built-in roles cannot be removed.
+   *
+   * @throws {BuiltInRoleError} If the role is a built-in role.
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @returns `this` for chaining.
+   */
+  removeRole(role: string): this {
+    if ((BUILT_IN_ROLE_NAMES as readonly string[]).includes(role)) {
+      throw new BuiltInRoleError(role)
+    }
+    if (!this.roles.has(role)) {
+      throw new UnknownRoleError(role)
+    }
+
+    this.roles.delete(role)
+    this.denies.delete(role)
+
+    this.adapter?.deleteRole(role).catch(() => {})
 
     return this
   }
@@ -232,15 +332,15 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.get(role)!.add(permission)
 
     // Fire-and-forget adapter persistence
-    this.adapter?.revokePermission(role, permission)
+    this.adapter?.saveDeny(role, permission).catch(() => {})
 
     return this
   }
 
   /**
    * Creates a `PolicyEngine` backed by a persistent adapter. Built-in roles that
-   * do not yet exist in the adapter's store are seeded automatically. All roles
-   * and their permissions are then loaded from the adapter into the engine.
+   * do not yet exist in the adapter's store are seeded automatically. All roles,
+   * their permissions, and any explicit denies are then loaded from the adapter.
    *
    * @param adapter - A `PermzAdapter` implementation (e.g. database-backed).
    * @returns A fully initialised `PolicyEngine` instance.
@@ -272,6 +372,12 @@ export class PolicyEngine implements IPolicyEngine {
         ...role,
         permissions: perms.length ? perms : role.permissions,
       })
+
+      // Reload explicit denies
+      const denied = await adapter.getDeniedPermissions(role.name)
+      if (denied.length) {
+        engine.denies.set(role.name, new Set(denied))
+      }
     }
 
     return engine

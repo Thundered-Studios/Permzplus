@@ -16,9 +16,19 @@ import { AdapterError } from '../errors'
  *   name        String            @id
  *   level       Int
  *   permissions PermzPermission[]
+ *   denies      PermzDeny[]
  * }
  *
  * model PermzPermission {
+ *   id         Int       @id @default(autoincrement())
+ *   roleName   String
+ *   permission String
+ *   role       PermzRole @relation(fields: [roleName], references: [name], onDelete: Cascade)
+ *
+ *   @@unique([roleName, permission])
+ * }
+ *
+ * model PermzDeny {
  *   id         Int       @id @default(autoincrement())
  *   roleName   String
  *   permission String
@@ -51,6 +61,13 @@ export class PrismaAdapter implements PermzAdapter {
   private get permissionDelegate(): any {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (this.prisma as any).permzPermission
+  }
+
+  /** Typed accessor for the `permzDeny` Prisma model delegate. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private get denyDelegate(): any {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    return (this.prisma as any).permzDeny
   }
 
   // ---------------------------------------------------------------------------
@@ -183,6 +200,46 @@ export class PrismaAdapter implements PermzAdapter {
     } catch (err) {
       throw new AdapterError(
         `PrismaAdapter.revokePermission failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /**
+   * Returns all explicitly denied permissions for a role.
+   *
+   * @param role - The name of the role to query.
+   * @returns An array of denied permission strings, or an empty array if none exist.
+   */
+  async getDeniedPermissions(role: string): Promise<string[]> {
+    try {
+      const records = await this.denyDelegate.findMany({
+        where: { roleName: role },
+      })
+      return records.map((r: any) => r.permission as string)
+    } catch (err) {
+      throw new AdapterError(
+        `PrismaAdapter.getDeniedPermissions failed for role "${role}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /**
+   * Persists an explicit deny for a role+permission pair. Uses upsert so the
+   * call is idempotent — calling it multiple times for the same pair is safe.
+   *
+   * @param role - The name of the role.
+   * @param permission - The permission string to deny.
+   */
+  async saveDeny(role: string, permission: string): Promise<void> {
+    try {
+      await this.denyDelegate.upsert({
+        where: { roleName_permission: { roleName: role, permission } },
+        create: { roleName: role, permission },
+        update: {},
+      })
+    } catch (err) {
+      throw new AdapterError(
+        `PrismaAdapter.saveDeny failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
       )
     }
   }

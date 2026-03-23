@@ -33,6 +33,16 @@ import { AdapterError } from '../errors'
  *   },
  *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
  * )
+ *
+ * export const permzDenies = pgTable(
+ *   'permz_denies',
+ *   {
+ *     id:         serial('id').primaryKey(),
+ *     roleName:   text('role_name').notNull().references(() => permzRoles.name, { onDelete: 'cascade' }),
+ *     permission: text('permission').notNull(),
+ *   },
+ *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
+ * )
  * ```
  *
  * **Equivalent sqlite-core schema:**
@@ -54,6 +64,16 @@ import { AdapterError } from '../errors'
  *   },
  *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
  * )
+ *
+ * export const permzDenies = sqliteTable(
+ *   'permz_denies',
+ *   {
+ *     id:         integer('id').primaryKey({ autoIncrement: true }),
+ *     roleName:   text('role_name').notNull().references(() => permzRoles.name, { onDelete: 'cascade' }),
+ *     permission: text('permission').notNull(),
+ *   },
+ *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
+ * )
  * ```
  */
 export interface PermzTables {
@@ -63,6 +83,9 @@ export interface PermzTables {
   /** Drizzle table reference for the permissions table (e.g. `permzPermissions`). */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   permissions: any
+  /** Drizzle table reference for the denies table (e.g. `permzDenies`). */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  denies: any
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +325,53 @@ export class DrizzleAdapter implements PermzAdapter {
       if (err instanceof AdapterError) throw err
       throw new AdapterError(
         `DrizzleAdapter.revokePermission failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /**
+   * Returns all explicitly denied permissions for a role from the denies table.
+   *
+   * @param role - The name of the role to query.
+   * @returns An array of denied permission strings.
+   */
+  async getDeniedPermissions(role: string): Promise<string[]> {
+    try {
+      const { eq } = await drizzleOps()
+
+      const rows: { permission: string }[] = await this.db
+        .select()
+        .from(this.tables.denies)
+        .where(eq(this.tables.denies.roleName, role))
+
+      return rows.map((r) => r.permission)
+    } catch (err) {
+      if (err instanceof AdapterError) throw err
+      throw new AdapterError(
+        `DrizzleAdapter.getDeniedPermissions failed for role "${role}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /**
+   * Persists an explicit deny for a role+permission pair.
+   *
+   * Uses `onConflictDoNothing` so that inserting a duplicate deny is a safe
+   * no-op — it will not throw a unique-constraint violation.
+   *
+   * @param role       - The name of the role.
+   * @param permission - The permission string to deny.
+   */
+  async saveDeny(role: string, permission: string): Promise<void> {
+    try {
+      await this.db
+        .insert(this.tables.denies)
+        .values({ roleName: role, permission })
+        .onConflictDoNothing()
+    } catch (err) {
+      if (err instanceof AdapterError) throw err
+      throw new AdapterError(
+        `DrizzleAdapter.saveDeny failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
       )
     }
   }

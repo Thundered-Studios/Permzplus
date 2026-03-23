@@ -1,0 +1,1 @@
+export { InMemoryAdapter } from '../adapter'

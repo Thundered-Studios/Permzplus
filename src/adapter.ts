@@ -7,11 +7,14 @@ export abstract class BaseAdapter implements PermzAdapter {
   abstract deleteRole(role: string): Promise<void>
   abstract grantPermission(role: string, permission: string): Promise<void>
   abstract revokePermission(role: string, permission: string): Promise<void>
+  abstract getDeniedPermissions(role: string): Promise<string[]>
+  abstract saveDeny(role: string, permission: string): Promise<void>
 }
 
 export class InMemoryAdapter extends BaseAdapter {
   private roles: Map<string, RoleDefinition> = new Map()
   private permissions: Map<string, Set<string>> = new Map()
+  private denies: Map<string, Set<string>> = new Map()
 
   async getRoles(): Promise<RoleDefinition[]> {
     return Array.from(this.roles.values())
@@ -29,6 +32,7 @@ export class InMemoryAdapter extends BaseAdapter {
   async deleteRole(role: string): Promise<void> {
     this.roles.delete(role)
     this.permissions.delete(role)
+    this.denies.delete(role)
   }
 
   async grantPermission(role: string, permission: string): Promise<void> {
@@ -40,5 +44,16 @@ export class InMemoryAdapter extends BaseAdapter {
 
   async revokePermission(role: string, permission: string): Promise<void> {
     this.permissions.get(role)?.delete(permission)
+  }
+
+  async getDeniedPermissions(role: string): Promise<string[]> {
+    return Array.from(this.denies.get(role) ?? [])
+  }
+
+  async saveDeny(role: string, permission: string): Promise<void> {
+    if (!this.denies.has(role)) {
+      this.denies.set(role, new Set())
+    }
+    this.denies.get(role)!.add(permission)
   }
 }

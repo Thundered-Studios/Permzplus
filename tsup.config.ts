@@ -7,6 +7,7 @@ export default defineConfig({
     "adapters/prisma": "src/adapters/prisma.ts",
     "adapters/mongoose": "src/adapters/mongoose.ts",
     "adapters/drizzle": "src/adapters/drizzle.ts",
+    "adapters/memory": "src/adapters/memory.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

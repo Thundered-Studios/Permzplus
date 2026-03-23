@@ -15,6 +15,7 @@ interface PermzRoleDocument {
   name: string
   level: number
   permissions: string[]
+  deniedPermissions: string[]
 }
 
 /**
@@ -62,6 +63,7 @@ export class MongooseAdapter implements PermzAdapter {
         name: { type: String, required: true, unique: true },
         level: { type: Number, required: true },
         permissions: [String],
+        deniedPermissions: [String],
       },
       { collection: 'permzroles' },
     )
@@ -205,6 +207,50 @@ export class MongooseAdapter implements PermzAdapter {
     } catch (err) {
       throw new AdapterError(
         `MongooseAdapter.revokePermission failed: ${(err as Error).message}`,
+      )
+    }
+  }
+
+  /**
+   * Returns all explicitly denied permissions for a role from the
+   * `deniedPermissions` embedded array.
+   *
+   * @param role - The name of the role to query.
+   * @returns An array of denied permission strings, or an empty array if none exist.
+   * @throws {AdapterError} When the database query fails.
+   */
+  async getDeniedPermissions(role: string): Promise<string[]> {
+    try {
+      const Model = this.getModel()
+      const doc: PermzRoleDocument | null = await Model.findOne({ name: role })
+      return doc?.deniedPermissions ?? []
+    } catch (err) {
+      throw new AdapterError(
+        `MongooseAdapter.getDeniedPermissions failed: ${(err as Error).message}`,
+      )
+    }
+  }
+
+  /**
+   * Adds a permission to the role's `deniedPermissions` array.
+   *
+   * Uses MongoDB's `$addToSet` operator so that duplicate denies are silently
+   * ignored — the permission string is only stored once.
+   *
+   * @param role       - The name of the role to update.
+   * @param permission - The permission string to deny.
+   * @throws {AdapterError} When the database operation fails.
+   */
+  async saveDeny(role: string, permission: string): Promise<void> {
+    try {
+      const Model = this.getModel()
+      await Model.updateOne(
+        { name: role },
+        { $addToSet: { deniedPermissions: permission } },
+      )
+    } catch (err) {
+      throw new AdapterError(
+        `MongooseAdapter.saveDeny failed: ${(err as Error).message}`,
       )
     }
   }

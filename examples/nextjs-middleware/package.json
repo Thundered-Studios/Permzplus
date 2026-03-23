@@ -1,0 +1,10 @@
+{
+  "name": "permzplus-nextjs-middleware-example",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Next.js middleware example using permzplus for route-level permission guards",
+  "dependencies": {
+    "next": "^14.0.0",
+    "permzplus": "workspace:*"
+  }
+}
