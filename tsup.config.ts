@@ -11,6 +11,7 @@ export default defineConfig({
     "adapters/mongoose": "src/adapters/mongoose.ts",
     "adapters/drizzle": "src/adapters/drizzle.ts",
     "adapters/memory": "src/adapters/memory.ts",
+    "adapters/firebase": "src/adapters/firebase.ts",
     // Framework guards
     "adapters/fastify": "src/adapters/fastify.ts",
     "adapters/hono": "src/adapters/hono.ts",
@@ -24,6 +25,10 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   splitting: false,
+  // CJS → .cjs, ESM → .js (matches package.json "exports" expectations)
+  outExtension({ format }) {
+    return { js: format === 'cjs' ? '.cjs' : '.js' }
+  },
   // Treat UI framework peer deps as external
-  external: ["react", "vue"],
+  external: ["react", "vue", "firebase"],
 });

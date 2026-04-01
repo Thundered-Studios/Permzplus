@@ -1,4 +1,4 @@
-const PERMISSION_PATTERN = /^(\*|[a-zA-Z0-9_-]+:\*|[a-zA-Z0-9_-]+:[a-zA-Z0-9_-]+)$/
+const PERMISSION_PATTERN = /^(\*|[a-zA-Z0-9_./-]+:\*|[a-zA-Z0-9_./-]+:[a-zA-Z0-9_./-]+)$/
 
 export function validatePermission(permission: string): boolean {
   return PERMISSION_PATTERN.test(permission)
