@@ -132,4 +132,8 @@ export interface IPolicyEngine {
   listRoles(): RoleDefinition[]
   /** Returns the full effective permission set for a role (inherited + groups, minus denies). */
   getPermissions(role: string): string[]
+  /** Like `can()` but returns `false` instead of throwing for unknown/empty roles. */
+  safeCan(role: string, permission: string): boolean
+  /** Returns field names within `resource` that `role` can perform `action` on (via `resource.field:action` permissions). */
+  permittedFieldsOf(role: string, resource: string, action: string): string[]
 }

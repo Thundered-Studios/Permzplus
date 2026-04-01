@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Hierarchical role-based permissions library for web apps",
   "keywords": [
     "permissions",
@@ -69,6 +69,11 @@
       "import": "./dist/adapters/nest.js",
       "require": "./dist/adapters/nest.cjs"
     },
+    "./adapters/firebase": {
+      "types": "./dist/adapters/firebase.d.ts",
+      "import": "./dist/adapters/firebase.js",
+      "require": "./dist/adapters/firebase.cjs"
+    },
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
@@ -98,6 +103,7 @@
     "@types/react": "^19.2.14",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
+    "drizzle-orm": "^0.45.2",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.5",
@@ -110,6 +116,7 @@
   "peerDependencies": {
     "@prisma/client": ">=5.0.0",
     "drizzle-orm": ">=0.29.0",
+    "firebase": ">=9.0.0",
     "mongoose": ">=7.0.0",
     "react": ">=18.0.0",
     "vue": ">=3.0.0"
@@ -128,6 +135,9 @@
       "optional": true
     },
     "vue": {
+      "optional": true
+    },
+    "firebase": {
       "optional": true
     }
   },

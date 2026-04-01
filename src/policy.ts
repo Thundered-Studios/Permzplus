@@ -412,6 +412,55 @@ export class PolicyEngine implements IPolicyEngine {
   }
 
   /**
+   * Like `can()` but returns `false` instead of throwing for unknown or empty
+   * roles. Safe to call for unauthenticated users.
+   */
+  safeCan(role: string, permission: string): boolean {
+    if (!role || !this.roles.has(role)) return false
+    try {
+      return this.can(role, permission)
+    } catch {
+      return false
+    }
+  }
+
+  /**
+   * Like `createContext()` but returns a zero-permission context for unknown
+   * or empty roles instead of throwing. Safe to use for unauthenticated users.
+   */
+  safeCreateContext(role: string | string[], opts?: Omit<ContextOptions, 'role' | 'roles'>): PermissionContext {
+    const roles = Array.isArray(role) ? role : [role]
+    const validRoles = roles.filter(r => r && this.roles.has(r))
+    if (validRoles.length === 0) {
+      return new PermissionContext([], this, opts)
+    }
+    return new PermissionContext(validRoles, this, opts)
+  }
+
+  /**
+   * Returns the field names within `resource` that `role` is allowed to perform
+   * `action` on. Looks for permissions in the format `resource.field:action`.
+   *
+   * @example
+   * policy.addRole({ name: 'EDITOR', level: 1, permissions: ['post.title:edit', 'post.body:edit', 'post.status:read'] })
+   * policy.permittedFieldsOf('EDITOR', 'post', 'edit') // → ['title', 'body']
+   * policy.permittedFieldsOf('EDITOR', 'post', 'read') // → ['status']
+   */
+  permittedFieldsOf(role: string, resource: string, action: string): string[] {
+    if (!role || !this.roles.has(role)) return []
+    const prefix = `${resource}.`
+    const suffix = `:${action}`
+    const fields: string[] = []
+    for (const perm of this.getPermissions(role)) {
+      if (perm.startsWith(prefix) && perm.endsWith(suffix)) {
+        const field = perm.slice(prefix.length, perm.length - suffix.length)
+        if (field) fields.push(field)
+      }
+    }
+    return fields
+  }
+
+  /**
    * Creates a `PermissionContext` for a user by fetching their assigned roles
    * from the adapter. Roles that no longer exist in the engine are silently
    * filtered out (stale assignment data).
