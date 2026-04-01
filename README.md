@@ -47,14 +47,6 @@ policy.can('SUPER_ADMIN', 'anything'); // true — wildcard
 
 Roles are ordered by privilege level. Each role automatically inherits all permissions from every role below it.
 
-| Role        | Level |
-|-------------|-------|
-| SUPER_ADMIN | 100   |
-| ADMIN       | 80    |
-| DEVELOPER   | 60    |
-| MODERATOR   | 40    |
-| USER        | 20    |
-| GUEST       | 0     |
 
 Custom roles can be inserted at any level via `addRole()`.
 
