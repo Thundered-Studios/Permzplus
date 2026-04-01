@@ -247,3 +247,263 @@ describe('PolicyEngine — createContext', () => {
     expect(ctx.can('posts:read')).toBe(true)
   })
 })
+
+describe('PolicyEngine — revokeFrom', () => {
+  let policy: PolicyEngine
+
+  beforeEach(() => {
+    policy = new PolicyEngine({ roles: TEST_ROLES })
+  })
+
+  it('GUEST cannot posts:read after revokeFrom', () => {
+    policy.revokeFrom('GUEST', 'posts:read')
+    expect(policy.can('GUEST', 'posts:read')).toBe(false)
+  })
+
+  it('revokeFrom is a no-op for a permission the role does not directly own', () => {
+    // USER inherits posts:read from GUEST but does not own it directly
+    expect(() => policy.revokeFrom('USER', 'posts:read')).not.toThrow()
+    // The inherited permission is unaffected — GUEST still has it
+    expect(policy.can('USER', 'posts:read')).toBe(true)
+  })
+
+  it('throws UnknownRoleError for unknown role', () => {
+    expect(() => policy.revokeFrom('PHANTOM', 'posts:read')).toThrow(UnknownRoleError)
+  })
+
+  it('throws InvalidPermissionError for invalid permission', () => {
+    expect(() => policy.revokeFrom('GUEST', 'bad perm!')).toThrow(InvalidPermissionError)
+  })
+
+  it('returns this (chainable)', () => {
+    expect(policy.revokeFrom('GUEST', 'posts:read')).toBe(policy)
+  })
+})
+
+describe('PolicyEngine — removeDeny', () => {
+  let policy: PolicyEngine
+
+  beforeEach(() => {
+    policy = new PolicyEngine({ roles: TEST_ROLES })
+  })
+
+  it('ADMIN can admin:panel again after removeDeny lifts the deny', () => {
+    policy.denyFrom('ADMIN', 'admin:panel')
+    expect(policy.can('ADMIN', 'admin:panel')).toBe(false)
+    policy.removeDeny('ADMIN', 'admin:panel')
+    expect(policy.can('ADMIN', 'admin:panel')).toBe(true)
+  })
+
+  it('removeDeny is a no-op when no deny exists', () => {
+    expect(() => policy.removeDeny('GUEST', 'posts:read')).not.toThrow()
+  })
+
+  it('throws UnknownRoleError for unknown role', () => {
+    expect(() => policy.removeDeny('PHANTOM', 'posts:read')).toThrow(UnknownRoleError)
+  })
+
+  it('returns this (chainable)', () => {
+    expect(policy.removeDeny('GUEST', 'posts:read')).toBe(policy)
+  })
+})
+
+describe('PolicyEngine — assertAll', () => {
+  let policy: PolicyEngine
+
+  beforeEach(() => {
+    policy = new PolicyEngine({ roles: TEST_ROLES })
+  })
+
+  it('does not throw when ADMIN has all permissions', () => {
+    expect(() => policy.assertAll('ADMIN', ['users:ban', 'admin:panel'])).not.toThrow()
+  })
+
+  it('throws PermissionDeniedError on the first missing permission', () => {
+    expect(() => policy.assertAll('USER', ['posts:read', 'users:ban'])).toThrow(PermissionDeniedError)
+  })
+})
+
+describe('PolicyEngine — assertAny', () => {
+  let policy: PolicyEngine
+
+  beforeEach(() => {
+    policy = new PolicyEngine({ roles: TEST_ROLES })
+  })
+
+  it('does not throw when MODERATOR has at least one permission', () => {
+    expect(() => policy.assertAny('MODERATOR', ['users:ban', 'posts:delete'])).not.toThrow()
+  })
+
+  it('throws PermissionDeniedError when role has none of the permissions', () => {
+    expect(() => policy.assertAny('GUEST', ['users:ban', 'admin:panel'])).toThrow(PermissionDeniedError)
+  })
+})
+
+describe('PolicyEngine — canWithReason', () => {
+  let policy: PolicyEngine
+
+  beforeEach(() => {
+    policy = new PolicyEngine({ roles: TEST_ROLES })
+  })
+
+  it('returns result:true when permission is granted', () => {
+    const res = policy.canWithReason('USER', 'posts:read')
+    expect(res.result).toBe(true)
+    expect(res.reason).toContain('posts:read')
+  })
+
+  it('returns result:false with "No permission" reason when not granted', () => {
+    const res = policy.canWithReason('GUEST', 'users:ban')
+    expect(res.result).toBe(false)
+    expect(res.reason).toContain('No permission')
+  })
+
+  it('returns result:false with "explicitly denied" reason when denied', () => {
+    policy.denyFrom('USER', 'posts:write')
+    const res = policy.canWithReason('USER', 'posts:write')
+    expect(res.result).toBe(false)
+    expect(res.reason).toContain('explicitly denied')
+  })
+
+  it('mentions "inherited" for permissions coming from a lower role', () => {
+    const res = policy.canWithReason('MODERATOR', 'posts:read')
+    expect(res.result).toBe(true)
+    expect(res.reason).toContain('inherited')
+  })
+
+  it('mentions wildcard pattern in reason for SUPER_ADMIN', () => {
+    const res = policy.canWithReason('SUPER_ADMIN', 'anything:ever')
+    expect(res.result).toBe(true)
+    expect(res.reason).toContain('*')
+  })
+})
+
+describe('PolicyEngine — hooks', () => {
+  it('onRoleAdd fires when addRole is called', () => {
+    const calls: string[] = []
+    const policy = new PolicyEngine({
+      roles: TEST_ROLES,
+      hooks: { onRoleAdd: (r) => calls.push(r.name) },
+    })
+    policy.addRole({ name: 'VIP', level: 25, permissions: [] })
+    expect(calls).toContain('VIP')
+  })
+
+  it('onRoleRemove fires when removeRole is called', () => {
+    const calls: string[] = []
+    const policy = new PolicyEngine({
+      roles: TEST_ROLES,
+      hooks: { onRoleRemove: (r) => calls.push(r) },
+    })
+    policy.addRole({ name: 'TEMP', level: 5, permissions: [] })
+    policy.removeRole('TEMP')
+    expect(calls).toContain('TEMP')
+  })
+
+  it('onGrant fires when grantTo is called', () => {
+    const calls: Array<[string, string]> = []
+    const policy = new PolicyEngine({
+      roles: TEST_ROLES,
+      hooks: { onGrant: (r, p) => calls.push([r, p]) },
+    })
+    policy.grantTo('GUEST', 'extra:perm')
+    expect(calls).toContainEqual(['GUEST', 'extra:perm'])
+  })
+
+  it('onRevoke fires when revokeFrom is called', () => {
+    const calls: Array<[string, string]> = []
+    const policy = new PolicyEngine({
+      roles: TEST_ROLES,
+      hooks: { onRevoke: (r, p) => calls.push([r, p]) },
+    })
+    policy.revokeFrom('GUEST', 'posts:read')
+    expect(calls).toContainEqual(['GUEST', 'posts:read'])
+  })
+
+  it('onDeny fires when denyFrom is called', () => {
+    const calls: Array<[string, string]> = []
+    const policy = new PolicyEngine({
+      roles: TEST_ROLES,
+      hooks: { onDeny: (r, p) => calls.push([r, p]) },
+    })
+    policy.denyFrom('USER', 'posts:write')
+    expect(calls).toContainEqual(['USER', 'posts:write'])
+  })
+
+  it('onRemoveDeny fires when removeDeny is called', () => {
+    const calls: Array<[string, string]> = []
+    const policy = new PolicyEngine({
+      roles: TEST_ROLES,
+      hooks: { onRemoveDeny: (r, p) => calls.push([r, p]) },
+    })
+    policy.denyFrom('USER', 'posts:write')
+    policy.removeDeny('USER', 'posts:write')
+    expect(calls).toContainEqual(['USER', 'posts:write'])
+  })
+})
+
+describe('PolicyEngine — toJSON / fromJSON', () => {
+  it('round-trips roles, denies, and groups', () => {
+    const policy = new PolicyEngine({ roles: TEST_ROLES })
+    policy.denyFrom('USER', 'posts:write')
+    policy.defineGroup('editors', ['posts:publish'])
+
+    const snapshot = policy.toJSON()
+    const restored = PolicyEngine.fromJSON(snapshot)
+
+    expect(restored.can('ADMIN', 'users:ban')).toBe(true)
+    expect(restored.can('USER', 'posts:write')).toBe(false)
+  })
+
+  it('toJSON includes denies', () => {
+    const policy = new PolicyEngine({ roles: TEST_ROLES })
+    policy.denyFrom('USER', 'posts:write')
+    const snap = policy.toJSON()
+    expect(snap.denies['USER']).toContain('posts:write')
+  })
+
+  it('toJSON includes groups', () => {
+    const policy = new PolicyEngine({ roles: TEST_ROLES })
+    policy.defineGroup('mygroup', ['foo:bar'])
+    const snap = policy.toJSON()
+    expect(snap.groups['mygroup']).toContain('foo:bar')
+  })
+
+  it('fromJSON restores inherited permissions correctly', () => {
+    const policy = new PolicyEngine({ roles: TEST_ROLES })
+    const restored = PolicyEngine.fromJSON(policy.toJSON())
+    expect(restored.can('MODERATOR', 'posts:read')).toBe(true)
+  })
+})
+
+describe('PolicyEngine — multi-role createContext', () => {
+  let policy: PolicyEngine
+
+  beforeEach(() => {
+    policy = new PolicyEngine({ roles: TEST_ROLES })
+  })
+
+  it('ctx.can returns true if ANY provided role has the permission', () => {
+    const ctx = policy.createContext(['GUEST', 'MODERATOR'])
+    expect(ctx.can('users:warn')).toBe(true)
+  })
+
+  it('ctx.role is the first role in the array', () => {
+    const ctx = policy.createContext(['GUEST', 'USER'])
+    expect(ctx.role).toBe('GUEST')
+  })
+
+  it('ctx.roles contains all roles', () => {
+    const ctx = policy.createContext(['GUEST', 'USER'])
+    expect(ctx.roles).toEqual(['GUEST', 'USER'])
+  })
+
+  it('ctx.isAtLeast returns true if ANY role meets the threshold', () => {
+    const ctx = policy.createContext(['GUEST', 'ADMIN'])
+    expect(ctx.isAtLeast('MODERATOR')).toBe(true)
+  })
+
+  it('throws UnknownRoleError if any role in the array is unknown', () => {
+    expect(() => policy.createContext(['USER', 'PHANTOM'])).toThrow(UnknownRoleError)
+  })
+})

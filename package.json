@@ -2,7 +2,14 @@
   "name": "permzplus",
   "version": "1.0.0",
   "description": "Hierarchical role-based permissions library for web apps",
-  "keywords": ["permissions", "rbac", "roles", "authorization", "acl"],
+  "keywords": [
+    "permissions",
+    "rbac",
+    "roles",
+    "authorization",
+    "acl",
+    "multi-tenant"
+  ],
   "homepage": "https://github.com/Thundered-Studios/Permzplus#readme",
   "bugs": {
     "url": "https://github.com/Thundered-Studios/Permzplus/issues"
@@ -11,39 +18,71 @@
     "type": "git",
     "url": "git+https://github.com/Thundered-Studios/Permzplus.git"
   },
-  "license": "GPL-3.0",
+  "license": "MIT",
   "author": "Arjun Katta",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "require": "./dist/index.cjs",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/index.cjs"
     },
     "./guard": {
+      "types": "./dist/guard.d.ts",
       "import": "./dist/guard.js",
-      "require": "./dist/guard.cjs",
-      "types": "./dist/guard.d.ts"
+      "require": "./dist/guard.cjs"
+    },
+    "./adapters/memory": {
+      "types": "./dist/adapters/memory.d.ts",
+      "import": "./dist/adapters/memory.js",
+      "require": "./dist/adapters/memory.cjs"
     },
     "./adapters/prisma": {
+      "types": "./dist/adapters/prisma.d.ts",
       "import": "./dist/adapters/prisma.js",
-      "require": "./dist/adapters/prisma.cjs",
-      "types": "./dist/adapters/prisma.d.ts"
+      "require": "./dist/adapters/prisma.cjs"
     },
     "./adapters/mongoose": {
+      "types": "./dist/adapters/mongoose.d.ts",
       "import": "./dist/adapters/mongoose.js",
-      "require": "./dist/adapters/mongoose.cjs",
-      "types": "./dist/adapters/mongoose.d.ts"
+      "require": "./dist/adapters/mongoose.cjs"
     },
     "./adapters/drizzle": {
+      "types": "./dist/adapters/drizzle.d.ts",
       "import": "./dist/adapters/drizzle.js",
-      "require": "./dist/adapters/drizzle.cjs",
-      "types": "./dist/adapters/drizzle.d.ts"
+      "require": "./dist/adapters/drizzle.cjs"
+    },
+    "./adapters/fastify": {
+      "types": "./dist/adapters/fastify.d.ts",
+      "import": "./dist/adapters/fastify.js",
+      "require": "./dist/adapters/fastify.cjs"
+    },
+    "./adapters/hono": {
+      "types": "./dist/adapters/hono.d.ts",
+      "import": "./dist/adapters/hono.js",
+      "require": "./dist/adapters/hono.cjs"
+    },
+    "./adapters/nest": {
+      "types": "./dist/adapters/nest.d.ts",
+      "import": "./dist/adapters/nest.js",
+      "require": "./dist/adapters/nest.cjs"
+    },
+    "./react": {
+      "types": "./dist/react.d.ts",
+      "import": "./dist/react.js",
+      "require": "./dist/react.cjs"
+    },
+    "./vue": {
+      "types": "./dist/vue.d.ts",
+      "import": "./dist/vue.js",
+      "require": "./dist/vue.cjs"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
@@ -56,24 +95,41 @@
     "prepublishOnly": "pnpm build && pnpm test"
   },
   "devDependencies": {
+    "@types/react": "^19.2.14",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
     "prettier": "^3.2.5",
+    "react": "^19.2.4",
     "tsup": "^8.0.2",
     "typescript": "^5.4.3",
-    "vitest": "^1.4.0"
+    "vitest": "^1.4.0",
+    "vue": "^3.5.31"
   },
   "peerDependencies": {
     "@prisma/client": ">=5.0.0",
     "drizzle-orm": ">=0.29.0",
-    "mongoose": ">=7.0.0"
+    "mongoose": ">=7.0.0",
+    "react": ">=18.0.0",
+    "vue": ">=3.0.0"
   },
   "peerDependenciesMeta": {
-    "@prisma/client": { "optional": true },
-    "drizzle-orm": { "optional": true },
-    "mongoose": { "optional": true }
+    "@prisma/client": {
+      "optional": true
+    },
+    "drizzle-orm": {
+      "optional": true
+    },
+    "mongoose": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "vue": {
+      "optional": true
+    }
   },
   "engines": {
     "node": ">=18.0.0"

@@ -26,9 +26,3 @@ export class AdapterError extends Error {
   }
 }
 
-export class BuiltInRoleError extends Error {
-  constructor(role: string) {
-    super(`Role "${role}" is a built-in role and cannot be removed`)
-    this.name = 'BuiltInRoleError'
-  }
-}

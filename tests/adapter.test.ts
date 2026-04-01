@@ -41,6 +41,26 @@ describe('InMemoryAdapter', () => {
     const roles = await adapter.getRoles()
     expect(roles.some((r) => r.name === 'TEST')).toBe(false)
   })
+
+  it('saveDeny then getDeniedPermissions includes the denied permission', async () => {
+    await adapter.saveRole({ name: 'TEST', level: 10, permissions: [] })
+    await adapter.saveDeny('TEST', 'x:y')
+    const denied = await adapter.getDeniedPermissions('TEST')
+    expect(denied).toContain('x:y')
+  })
+
+  it('removeDeny removes the denied permission', async () => {
+    await adapter.saveRole({ name: 'TEST', level: 10, permissions: [] })
+    await adapter.saveDeny('TEST', 'x:y')
+    await adapter.removeDeny('TEST', 'x:y')
+    const denied = await adapter.getDeniedPermissions('TEST')
+    expect(denied).not.toContain('x:y')
+  })
+
+  it('removeDeny is a no-op when deny does not exist', async () => {
+    await adapter.saveRole({ name: 'TEST', level: 10, permissions: [] })
+    await expect(adapter.removeDeny('TEST', 'x:y')).resolves.not.toThrow()
+  })
 })
 
 describe('PolicyEngine.fromAdapter', () => {

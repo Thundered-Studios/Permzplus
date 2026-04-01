@@ -1,6 +1,6 @@
 export * from './types'
-export * from './roles'
 export * from './errors'
 export * from './permissions'
 export * from './policy'
 export * from './context'
+export { BaseAdapter, InMemoryAdapter } from './adapter'

@@ -6,15 +6,10 @@ import { AdapterError } from '../errors'
 // ---------------------------------------------------------------------------
 
 /**
- * References to the two Drizzle table definitions that the consumer must
- * create in their own schema file and pass to {@link DrizzleAdapter}.
+ * References to the Drizzle table definitions that the consumer must create
+ * in their own schema file and pass to {@link DrizzleAdapter}.
  *
- * Because `drizzle-orm` is an optional peer dependency, Permzplus does not
- * define the tables internally. Instead, consumers should define them once
- * using the appropriate Drizzle table factory for their database dialect and
- * then pass the resulting table objects here.
- *
- * **Recommended pg-core schema (copy-paste into your schema file):**
+ * **Recommended pg-core schema:**
  *
  * ```ts
  * import { pgTable, text, integer, serial, unique } from 'drizzle-orm/pg-core'
@@ -43,60 +38,46 @@ import { AdapterError } from '../errors'
  *   },
  *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
  * )
- * ```
  *
- * **Equivalent sqlite-core schema:**
- *
- * ```ts
- * import { sqliteTable, text, integer, unique } from 'drizzle-orm/sqlite-core'
- *
- * export const permzRoles = sqliteTable('permz_roles', {
- *   name:  text('name').primaryKey(),
- *   level: integer('level').notNull(),
- * })
- *
- * export const permzPermissions = sqliteTable(
- *   'permz_permissions',
+ * // Required only if you use assignRole() / canUser() / createUserContext()
+ * export const permzUserRoles = pgTable(
+ *   'permz_user_roles',
  *   {
- *     id:         integer('id').primaryKey({ autoIncrement: true }),
- *     roleName:   text('role_name').notNull().references(() => permzRoles.name, { onDelete: 'cascade' }),
- *     permission: text('permission').notNull(),
+ *     id:       serial('id').primaryKey(),
+ *     userId:   text('user_id').notNull(),
+ *     roleName: text('role_name').notNull().references(() => permzRoles.name, { onDelete: 'cascade' }),
+ *     tenantId: text('tenant_id').notNull().default(''),
  *   },
- *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
- * )
- *
- * export const permzDenies = sqliteTable(
- *   'permz_denies',
- *   {
- *     id:         integer('id').primaryKey({ autoIncrement: true }),
- *     roleName:   text('role_name').notNull().references(() => permzRoles.name, { onDelete: 'cascade' }),
- *     permission: text('permission').notNull(),
- *   },
- *   (t) => ({ uniq: unique().on(t.roleName, t.permission) }),
+ *   (t) => ({ uniq: unique().on(t.userId, t.roleName, t.tenantId) }),
  * )
  * ```
+ *
+ * **Equivalent sqlite-core schema:** replace `pgTable`/`serial` with
+ * `sqliteTable`/`integer('id').primaryKey({ autoIncrement: true })`.
  */
 export interface PermzTables {
-  /** Drizzle table reference for the roles table (e.g. `permzRoles`). */
+  /** Drizzle table reference for the roles table. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   roles: any
-  /** Drizzle table reference for the permissions table (e.g. `permzPermissions`). */
+  /** Drizzle table reference for the permissions table. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   permissions: any
-  /** Drizzle table reference for the denies table (e.g. `permzDenies`). */
+  /** Drizzle table reference for the denies table. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   denies: any
+  /**
+   * Drizzle table reference for the user-roles table.
+   * Optional — required only for `assignRole()`, `revokeRole()`, and
+   * `getUserRoles()`. If absent those methods throw an `AdapterError`.
+   */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  userRoles?: any
 }
 
 // ---------------------------------------------------------------------------
 // Helper: lazy drizzle-orm import
 // ---------------------------------------------------------------------------
 
-/**
- * Dynamically imports `drizzle-orm` and returns the helpers needed for
- * building WHERE clauses. Throws {@link AdapterError} with a clear message
- * when the package is not installed so that end-users know exactly what to do.
- */
 async function drizzleOps(): Promise<{ eq: any; and: any }> {
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -104,8 +85,7 @@ async function drizzleOps(): Promise<{ eq: any; and: any }> {
     return { eq: mod.eq, and: mod.and }
   } catch {
     throw new AdapterError(
-      'DrizzleAdapter requires "drizzle-orm" to be installed. ' +
-        'Run: npm install drizzle-orm',
+      'DrizzleAdapter requires "drizzle-orm" to be installed. Run: npm install drizzle-orm',
     )
   }
 }
@@ -117,28 +97,19 @@ async function drizzleOps(): Promise<{ eq: any; and: any }> {
 /**
  * Drizzle ORM adapter for Permzplus.
  *
- * Persists roles and permissions using a Drizzle `db` instance and explicit
- * table references supplied by the consumer. Because Drizzle is schema-first
- * and supports multiple SQL dialects (PostgreSQL, SQLite, MySQL), the library
- * cannot bundle its own table definitions — the consumer must define the
- * tables once and pass them via {@link PermzTables}.
- *
- * `drizzle-orm` itself is an optional peer dependency and is imported
- * dynamically at runtime; if it is absent a descriptive {@link AdapterError}
- * is thrown.
- *
  * @example
  * ```ts
  * import { drizzle } from 'drizzle-orm/node-postgres'
- * import { DrizzleAdapter, PermzTables } from 'permzplus/adapters/drizzle'
- * import { permzRoles, permzPermissions } from './schema'
- * import { Pool } from 'pg'
+ * import { DrizzleAdapter } from 'permzplus/adapters/drizzle'
+ * import { permzRoles, permzPermissions, permzDenies, permzUserRoles } from './schema'
  *
- * const pool = new Pool({ connectionString: process.env.DATABASE_URL })
- * const db   = drizzle(pool)
- *
- * const tables: PermzTables = { roles: permzRoles, permissions: permzPermissions }
- * const adapter = new DrizzleAdapter(db, tables)
+ * const db = drizzle(pool)
+ * const adapter = new DrizzleAdapter(db, {
+ *   roles: permzRoles,
+ *   permissions: permzPermissions,
+ *   denies: permzDenies,
+ *   userRoles: permzUserRoles, // optional, needed for user-role assignment
+ * })
  * ```
  */
 export class DrizzleAdapter implements PermzAdapter {
@@ -146,12 +117,6 @@ export class DrizzleAdapter implements PermzAdapter {
   private readonly db: any
   private readonly tables: PermzTables
 
-  /**
-   * @param db     - A Drizzle database instance (e.g. the return value of
-   *                 `drizzle(pool)` or `drizzle(client)`).
-   * @param tables - References to the two Drizzle table objects that map to
-   *                 the roles and permissions tables. See {@link PermzTables}.
-   */
   constructor(db: unknown, tables: PermzTables) {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     this.db = db as any
@@ -159,19 +124,9 @@ export class DrizzleAdapter implements PermzAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // PermzAdapter implementation
+  // Role definition methods
   // ---------------------------------------------------------------------------
 
-  /**
-   * Retrieves all roles together with their associated permissions.
-   *
-   * Executes two queries: one to fetch every role row, then — in parallel —
-   * one `getPermissions` call per role. For small-to-medium role catalogs
-   * (typically fewer than a hundred entries) this is straightforward and
-   * avoids the need for a join with manual result grouping.
-   *
-   * @returns An array of {@link RoleDefinition} objects.
-   */
   async getRoles(): Promise<RoleDefinition[]> {
     try {
       const roleRows: { name: string; level: number }[] = await this.db
@@ -181,38 +136,23 @@ export class DrizzleAdapter implements PermzAdapter {
       const definitions = await Promise.all(
         roleRows.map(async (row) => {
           const permissions = await this.getPermissions(row.name)
-          return {
-            name: row.name,
-            level: row.level,
-            permissions,
-          } satisfies RoleDefinition
+          return { name: row.name, level: row.level, permissions } satisfies RoleDefinition
         }),
       )
-
       return definitions
     } catch (err) {
       if (err instanceof AdapterError) throw err
-      throw new AdapterError(
-        `DrizzleAdapter.getRoles failed: ${(err as Error).message ?? err}`,
-      )
+      throw new AdapterError(`DrizzleAdapter.getRoles failed: ${(err as Error).message ?? err}`)
     }
   }
 
-  /**
-   * Retrieves all permissions granted to a specific role.
-   *
-   * @param role - The name of the role whose permissions should be fetched.
-   * @returns An array of permission strings belonging to the role.
-   */
   async getPermissions(role: string): Promise<string[]> {
     try {
       const { eq } = await drizzleOps()
-
       const rows: { permission: string }[] = await this.db
         .select()
         .from(this.tables.permissions)
         .where(eq(this.tables.permissions.roleName, role))
-
       return rows.map((r) => r.permission)
     } catch (err) {
       if (err instanceof AdapterError) throw err
@@ -222,28 +162,12 @@ export class DrizzleAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Creates or updates a role record in the database.
-   *
-   * Only the role name and level are persisted here. Permissions are managed
-   * separately via {@link grantPermission} and {@link revokePermission}.
-   *
-   * Uses `onConflictDoUpdate` so the call is idempotent — re-saving a role
-   * with a new level simply updates the existing row.
-   *
-   * @param role - The {@link RoleDefinition} to upsert. The `permissions`
-   *   array on the definition is ignored; use {@link grantPermission} to
-   *   persist individual permissions.
-   */
   async saveRole(role: RoleDefinition): Promise<void> {
     try {
       await this.db
         .insert(this.tables.roles)
         .values({ name: role.name, level: role.level })
-        .onConflictDoUpdate({
-          target: this.tables.roles.name,
-          set: { level: role.level },
-        })
+        .onConflictDoUpdate({ target: this.tables.roles.name, set: { level: role.level } })
     } catch (err) {
       if (err instanceof AdapterError) throw err
       throw new AdapterError(
@@ -252,22 +176,10 @@ export class DrizzleAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Deletes a role from the database.
-   *
-   * Associated permission rows are removed automatically via the
-   * `onDelete: 'cascade'` foreign-key constraint defined on the permissions
-   * table (see {@link PermzTables} for the recommended schema).
-   *
-   * @param role - The name of the role to delete.
-   */
   async deleteRole(role: string): Promise<void> {
     try {
       const { eq } = await drizzleOps()
-
-      await this.db
-        .delete(this.tables.roles)
-        .where(eq(this.tables.roles.name, role))
+      await this.db.delete(this.tables.roles).where(eq(this.tables.roles.name, role))
     } catch (err) {
       if (err instanceof AdapterError) throw err
       throw new AdapterError(
@@ -276,16 +188,6 @@ export class DrizzleAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Grants a permission to a role, creating the record if it does not already
-   * exist.
-   *
-   * Uses `onConflictDoNothing` so that granting a permission that is already
-   * present is a safe no-op — it will not throw a unique-constraint violation.
-   *
-   * @param role       - The name of the role to grant the permission to.
-   * @param permission - The permission string to grant.
-   */
   async grantPermission(role: string, permission: string): Promise<void> {
     try {
       await this.db
@@ -300,19 +202,9 @@ export class DrizzleAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Revokes a permission from a role.
-   *
-   * The operation is a no-op when the `(roleName, permission)` pair does not
-   * exist — Drizzle's `delete` simply affects zero rows without throwing.
-   *
-   * @param role       - The name of the role to revoke the permission from.
-   * @param permission - The permission string to revoke.
-   */
   async revokePermission(role: string, permission: string): Promise<void> {
     try {
       const { eq, and } = await drizzleOps()
-
       await this.db
         .delete(this.tables.permissions)
         .where(
@@ -329,21 +221,13 @@ export class DrizzleAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Returns all explicitly denied permissions for a role from the denies table.
-   *
-   * @param role - The name of the role to query.
-   * @returns An array of denied permission strings.
-   */
   async getDeniedPermissions(role: string): Promise<string[]> {
     try {
       const { eq } = await drizzleOps()
-
       const rows: { permission: string }[] = await this.db
         .select()
         .from(this.tables.denies)
         .where(eq(this.tables.denies.roleName, role))
-
       return rows.map((r) => r.permission)
     } catch (err) {
       if (err instanceof AdapterError) throw err
@@ -353,15 +237,6 @@ export class DrizzleAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Persists an explicit deny for a role+permission pair.
-   *
-   * Uses `onConflictDoNothing` so that inserting a duplicate deny is a safe
-   * no-op — it will not throw a unique-constraint violation.
-   *
-   * @param role       - The name of the role.
-   * @param permission - The permission string to deny.
-   */
   async saveDeny(role: string, permission: string): Promise<void> {
     try {
       await this.db
@@ -372,6 +247,101 @@ export class DrizzleAdapter implements PermzAdapter {
       if (err instanceof AdapterError) throw err
       throw new AdapterError(
         `DrizzleAdapter.saveDeny failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  async removeDeny(role: string, permission: string): Promise<void> {
+    try {
+      const { eq, and } = await drizzleOps()
+      await this.db
+        .delete(this.tables.denies)
+        .where(
+          and(
+            eq(this.tables.denies.roleName, role),
+            eq(this.tables.denies.permission, permission),
+          ),
+        )
+    } catch (err) {
+      if (err instanceof AdapterError) throw err
+      throw new AdapterError(
+        `DrizzleAdapter.removeDeny failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // User-role assignment methods
+  // ---------------------------------------------------------------------------
+
+  private requireUserRolesTable(): void {
+    if (!this.tables.userRoles) {
+      throw new AdapterError(
+        'DrizzleAdapter: pass a "userRoles" table reference to PermzTables to enable user-role assignment.',
+      )
+    }
+  }
+
+  /**
+   * Assigns a role to a user. Uses `onConflictDoNothing` so duplicate
+   * assignments are a safe no-op.
+   */
+  async assignRole(userId: string, roleName: string, tenantId = ''): Promise<void> {
+    this.requireUserRolesTable()
+    try {
+      await this.db
+        .insert(this.tables.userRoles)
+        .values({ userId, roleName, tenantId })
+        .onConflictDoNothing()
+    } catch (err) {
+      if (err instanceof AdapterError) throw err
+      throw new AdapterError(
+        `DrizzleAdapter.assignRole failed for user "${userId}", role "${roleName}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /** Revokes a role from a user. No-op if the assignment does not exist. */
+  async revokeRole(userId: string, roleName: string, tenantId = ''): Promise<void> {
+    this.requireUserRolesTable()
+    try {
+      const { eq, and } = await drizzleOps()
+      await this.db
+        .delete(this.tables.userRoles)
+        .where(
+          and(
+            eq(this.tables.userRoles.userId, userId),
+            eq(this.tables.userRoles.roleName, roleName),
+            eq(this.tables.userRoles.tenantId, tenantId),
+          ),
+        )
+    } catch (err) {
+      if (err instanceof AdapterError) throw err
+      throw new AdapterError(
+        `DrizzleAdapter.revokeRole failed for user "${userId}", role "${roleName}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /** Returns all role names assigned to a user, optionally filtered by tenant. */
+  async getUserRoles(userId: string, tenantId = ''): Promise<string[]> {
+    this.requireUserRolesTable()
+    try {
+      const { eq, and } = await drizzleOps()
+      const rows: { roleName: string }[] = await this.db
+        .select()
+        .from(this.tables.userRoles)
+        .where(
+          and(
+            eq(this.tables.userRoles.userId, userId),
+            eq(this.tables.userRoles.tenantId, tenantId),
+          ),
+        )
+      return rows.map((r) => r.roleName)
+    } catch (err) {
+      if (err instanceof AdapterError) throw err
+      throw new AdapterError(
+        `DrizzleAdapter.getUserRoles failed for user "${userId}": ${(err as Error).message ?? err}`,
       )
     }
   }

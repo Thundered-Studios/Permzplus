@@ -4,12 +4,12 @@ import { AdapterError } from '../errors'
 /**
  * Prisma adapter for Permzplus.
  *
- * Persists roles and permissions using a PrismaClient instance provided by the
- * consumer. Because `@prisma/client` is an optional peer dependency its types
+ * Persists roles, permissions, and user-role assignments using a PrismaClient
+ * instance. Because `@prisma/client` is an optional peer dependency its types
  * are not imported directly; the constructor accepts `unknown` and the client
  * is cast internally.
  *
- * The consumer's Prisma schema must include the following two models:
+ * **Required Prisma schema — add these models to your `schema.prisma`:**
  *
  * ```prisma
  * model PermzRole {
@@ -17,6 +17,7 @@ import { AdapterError } from '../errors'
  *   level       Int
  *   permissions PermzPermission[]
  *   denies      PermzDeny[]
+ *   userRoles   PermzUserRole[]
  * }
  *
  * model PermzPermission {
@@ -36,6 +37,18 @@ import { AdapterError } from '../errors'
  *
  *   @@unique([roleName, permission])
  * }
+ *
+ * // Required only if you use assignRole() / canUser() / createUserContext()
+ * model PermzUserRole {
+ *   id       Int       @id @default(autoincrement())
+ *   userId   String
+ *   roleName String
+ *   tenantId String    @default("")
+ *   role     PermzRole @relation(fields: [roleName], references: [name], onDelete: Cascade)
+ *
+ *   @@unique([userId, roleName, tenantId])
+ *   @@index([userId, tenantId])
+ * }
  * ```
  */
 export class PrismaAdapter implements PermzAdapter {
@@ -46,71 +59,51 @@ export class PrismaAdapter implements PermzAdapter {
   }
 
   // ---------------------------------------------------------------------------
-  // Internal helpers
+  // Internal delegate helpers
   // ---------------------------------------------------------------------------
 
-  /** Typed accessor for the `permzRole` Prisma model delegate. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private get roleDelegate(): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (this.prisma as any).permzRole
   }
 
-  /** Typed accessor for the `permzPermission` Prisma model delegate. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private get permissionDelegate(): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (this.prisma as any).permzPermission
   }
 
-  /** Typed accessor for the `permzDeny` Prisma model delegate. */
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private get denyDelegate(): any {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (this.prisma as any).permzDeny
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private get userRoleDelegate(): any {
+    return (this.prisma as any).permzUserRole
+  }
+
   // ---------------------------------------------------------------------------
-  // PermzAdapter implementation
+  // Role definition methods
   // ---------------------------------------------------------------------------
 
-  /**
-   * Retrieves all roles together with their associated permissions.
-   *
-   * @returns An array of {@link RoleDefinition} objects, each containing the
-   *   role name, numeric level, and the list of permission strings granted to
-   *   that role.
-   */
   async getRoles(): Promise<RoleDefinition[]> {
     try {
       const records = await this.roleDelegate.findMany({
         include: { permissions: true },
       })
-
       return records.map((record: any) => ({
         name: record.name,
         level: record.level,
         permissions: record.permissions.map((p: any) => p.permission as string),
       }))
     } catch (err) {
-      throw new AdapterError(
-        `PrismaAdapter.getRoles failed: ${(err as Error).message ?? err}`,
-      )
+      throw new AdapterError(`PrismaAdapter.getRoles failed: ${(err as Error).message ?? err}`)
     }
   }
 
-  /**
-   * Retrieves all permissions granted to a specific role.
-   *
-   * @param role - The name of the role whose permissions should be fetched.
-   * @returns An array of permission strings belonging to the role.
-   */
   async getPermissions(role: string): Promise<string[]> {
     try {
-      const records = await this.permissionDelegate.findMany({
-        where: { roleName: role },
-      })
-
+      const records = await this.permissionDelegate.findMany({ where: { roleName: role } })
       return records.map((r: any) => r.permission as string)
     } catch (err) {
       throw new AdapterError(
@@ -119,14 +112,6 @@ export class PrismaAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Creates or updates a role record in the database.
-   *
-   * Only the role name and level are persisted here. Permissions are managed
-   * separately via {@link grantPermission} and {@link revokePermission}.
-   *
-   * @param role - The {@link RoleDefinition} to upsert.
-   */
   async saveRole(role: RoleDefinition): Promise<void> {
     try {
       await this.roleDelegate.upsert({
@@ -141,19 +126,9 @@ export class PrismaAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Deletes a role from the database.
-   *
-   * Associated `PermzPermission` rows are removed automatically via the
-   * `onDelete: Cascade` relation defined in the schema.
-   *
-   * @param role - The name of the role to delete.
-   */
   async deleteRole(role: string): Promise<void> {
     try {
-      await this.roleDelegate.delete({
-        where: { name: role },
-      })
+      await this.roleDelegate.delete({ where: { name: role } })
     } catch (err) {
       throw new AdapterError(
         `PrismaAdapter.deleteRole failed for role "${role}": ${(err as Error).message ?? err}`,
@@ -161,14 +136,6 @@ export class PrismaAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Grants a permission to a role, creating the record if it does not already
-   * exist. If the `(roleName, permission)` pair is already present the
-   * operation is a no-op (the `update` clause is intentionally empty).
-   *
-   * @param role - The name of the role to grant the permission to.
-   * @param permission - The permission string to grant.
-   */
   async grantPermission(role: string, permission: string): Promise<void> {
     try {
       await this.permissionDelegate.upsert({
@@ -183,20 +150,9 @@ export class PrismaAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Revokes a permission from a role.
-   *
-   * Uses `deleteMany` so that the operation is a no-op when the record does
-   * not exist, rather than throwing a Prisma `RecordNotFound` error.
-   *
-   * @param role - The name of the role to revoke the permission from.
-   * @param permission - The permission string to revoke.
-   */
   async revokePermission(role: string, permission: string): Promise<void> {
     try {
-      await this.permissionDelegate.deleteMany({
-        where: { roleName: role, permission },
-      })
+      await this.permissionDelegate.deleteMany({ where: { roleName: role, permission } })
     } catch (err) {
       throw new AdapterError(
         `PrismaAdapter.revokePermission failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
@@ -204,17 +160,9 @@ export class PrismaAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Returns all explicitly denied permissions for a role.
-   *
-   * @param role - The name of the role to query.
-   * @returns An array of denied permission strings, or an empty array if none exist.
-   */
   async getDeniedPermissions(role: string): Promise<string[]> {
     try {
-      const records = await this.denyDelegate.findMany({
-        where: { roleName: role },
-      })
+      const records = await this.denyDelegate.findMany({ where: { roleName: role } })
       return records.map((r: any) => r.permission as string)
     } catch (err) {
       throw new AdapterError(
@@ -223,13 +171,6 @@ export class PrismaAdapter implements PermzAdapter {
     }
   }
 
-  /**
-   * Persists an explicit deny for a role+permission pair. Uses upsert so the
-   * call is idempotent — calling it multiple times for the same pair is safe.
-   *
-   * @param role - The name of the role.
-   * @param permission - The permission string to deny.
-   */
   async saveDeny(role: string, permission: string): Promise<void> {
     try {
       await this.denyDelegate.upsert({
@@ -240,6 +181,64 @@ export class PrismaAdapter implements PermzAdapter {
     } catch (err) {
       throw new AdapterError(
         `PrismaAdapter.saveDeny failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  async removeDeny(role: string, permission: string): Promise<void> {
+    try {
+      await this.denyDelegate.deleteMany({ where: { roleName: role, permission } })
+    } catch (err) {
+      throw new AdapterError(
+        `PrismaAdapter.removeDeny failed for role "${role}", permission "${permission}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // User-role assignment methods
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Assigns a role to a user, optionally scoped to a tenant.
+   * Uses upsert so the call is idempotent.
+   */
+  async assignRole(userId: string, roleName: string, tenantId = ''): Promise<void> {
+    try {
+      await this.userRoleDelegate.upsert({
+        where: { userId_roleName_tenantId: { userId, roleName, tenantId } },
+        create: { userId, roleName, tenantId },
+        update: {},
+      })
+    } catch (err) {
+      throw new AdapterError(
+        `PrismaAdapter.assignRole failed for user "${userId}", role "${roleName}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /**
+   * Revokes a role from a user. Uses `deleteMany` so it is a no-op when the
+   * assignment does not exist.
+   */
+  async revokeRole(userId: string, roleName: string, tenantId = ''): Promise<void> {
+    try {
+      await this.userRoleDelegate.deleteMany({ where: { userId, roleName, tenantId } })
+    } catch (err) {
+      throw new AdapterError(
+        `PrismaAdapter.revokeRole failed for user "${userId}", role "${roleName}": ${(err as Error).message ?? err}`,
+      )
+    }
+  }
+
+  /** Returns all role names assigned to a user, optionally filtered by tenant. */
+  async getUserRoles(userId: string, tenantId = ''): Promise<string[]> {
+    try {
+      const records = await this.userRoleDelegate.findMany({ where: { userId, tenantId } })
+      return records.map((r: any) => r.roleName as string)
+    } catch (err) {
+      throw new AdapterError(
+        `PrismaAdapter.getUserRoles failed for user "${userId}": ${(err as Error).message ?? err}`,
       )
     }
   }
