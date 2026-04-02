@@ -1,5 +1,38 @@
 export type RoleLevel = number
 
+// ---------------------------------------------------------------------------
+// Audit logging
+// ---------------------------------------------------------------------------
+
+export type AuditAction =
+  | 'role.add'
+  | 'role.remove'
+  | 'permission.grant'
+  | 'permission.revoke'
+  | 'permission.deny'
+  | 'permission.removeDeny'
+  | 'user.assignRole'
+  | 'user.revokeRole'
+
+export interface AuditEvent {
+  action: AuditAction
+  /** The role involved, if applicable. */
+  role?: string
+  /** The permission involved, if applicable. */
+  permission?: string
+  /** The user involved, if applicable (user-role assignment events). */
+  userId?: string
+  /** The tenant involved, if applicable. */
+  tenantId?: string
+  timestamp: Date
+  /** Any extra metadata the caller wants to attach. */
+  meta?: Record<string, unknown>
+}
+
+export interface AuditLogger {
+  log(event: AuditEvent): void | Promise<void>
+}
+
 export interface RoleDefinition {
   name: string
   level: RoleLevel
@@ -50,6 +83,12 @@ export interface PolicyOptions {
    * Useful for tracing "why can't this user do X?" in development.
    */
   debug?: boolean
+  /**
+   * Optional audit logger. Called after every policy mutation with a
+   * structured `AuditEvent`. Use `InMemoryAuditLogger` in tests or wire in
+   * your own implementation to persist to a database.
+   */
+  audit?: AuditLogger
 }
 
 export interface ContextOptions {

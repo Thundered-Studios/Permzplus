@@ -7,6 +7,8 @@ import type {
   PolicyHooks,
   PolicySnapshot,
   PermissionCheckResult,
+  AuditEvent,
+  AuditLogger,
 } from './types'
 import { PermissionDeniedError, UnknownRoleError, InvalidPermissionError, AdapterError } from './errors'
 import { validatePermission, matchesPermission } from './permissions'
@@ -19,6 +21,7 @@ export class PolicyEngine implements IPolicyEngine {
   private adapter?: PermzAdapter
   private hooks: PolicyHooks
   private readonly debugMode: boolean
+  private readonly auditLogger?: AuditLogger
   /** Cached resolved permission sets, keyed by role name. Cleared on any mutation. */
   private permCache: Map<string, Set<string>>
 
@@ -28,6 +31,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.groups = new Map()
     this.hooks = options?.hooks ?? {}
     this.debugMode = options?.debug ?? false
+    this.auditLogger = options?.audit
     this.permCache = new Map()
 
     if (options?.roles) {
@@ -71,6 +75,16 @@ export class PolicyEngine implements IPolicyEngine {
     promise?.catch((err: unknown) => {
       this.hooks.onAdapterError?.(err instanceof Error ? err : new Error(String(err)), method)
     })
+  }
+
+  /** Fires an audit event. Errors from async loggers are swallowed to avoid disrupting callers. */
+  private fireAudit(event: Omit<AuditEvent, 'timestamp'>): void {
+    if (!this.auditLogger) return
+    const full: AuditEvent = { ...event, timestamp: new Date() }
+    const result = this.auditLogger.log(full)
+    if (result instanceof Promise) {
+      result.catch(() => { /* audit errors must not disrupt permission checks */ })
+    }
   }
 
   /** Clears the entire permission cache. Called on every mutation. */
@@ -501,6 +515,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.roles.set(role.name, { ...role, permissions: [...role.permissions] })
     this.invalidateCache()
     this.hooks.onRoleAdd?.(role)
+    this.fireAudit({ action: 'role.add', role: role.name })
 
     this.fireAndForget(this.adapter?.saveRole(role), 'saveRole')
     for (const perm of role.permissions) {
@@ -525,6 +540,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.delete(role)
     this.invalidateCache()
     this.hooks.onRoleRemove?.(role)
+    this.fireAudit({ action: 'role.remove', role })
 
     this.fireAndForget(this.adapter?.deleteRole(role), 'deleteRole')
 
@@ -554,6 +570,7 @@ export class PolicyEngine implements IPolicyEngine {
 
     this.invalidateCache()
     this.hooks.onGrant?.(role, permission)
+    this.fireAudit({ action: 'permission.grant', role, permission })
     this.fireAndForget(this.adapter?.grantPermission(role, permission), 'grantPermission')
 
     return this
@@ -580,6 +597,7 @@ export class PolicyEngine implements IPolicyEngine {
     def.permissions = def.permissions.filter((p) => p !== permission)
     this.invalidateCache()
     this.hooks.onRevoke?.(role, permission)
+    this.fireAudit({ action: 'permission.revoke', role, permission })
     this.fireAndForget(this.adapter?.revokePermission(role, permission), 'revokePermission')
 
     return this
@@ -608,6 +626,7 @@ export class PolicyEngine implements IPolicyEngine {
 
     this.permCache.delete(role)
     this.hooks.onDeny?.(role, permission)
+    this.fireAudit({ action: 'permission.deny', role, permission })
     this.fireAndForget(this.adapter?.saveDeny(role, permission), 'saveDeny')
 
     return this
@@ -632,6 +651,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.get(role)?.delete(permission)
     this.permCache.delete(role)
     this.hooks.onRemoveDeny?.(role, permission)
+    this.fireAudit({ action: 'permission.removeDeny', role, permission })
     this.fireAndForget(this.adapter?.removeDeny(role, permission), 'removeDeny')
 
     return this
@@ -654,6 +674,7 @@ export class PolicyEngine implements IPolicyEngine {
     }
     const adapter = this.requireUserAdapter()
     await adapter.assignRole(userId, roleName, tenantId)
+    this.fireAudit({ action: 'user.assignRole', role: roleName, userId, tenantId })
   }
 
   /**
@@ -664,6 +685,7 @@ export class PolicyEngine implements IPolicyEngine {
   async revokeRole(userId: string, roleName: string, tenantId?: string): Promise<void> {
     const adapter = this.requireUserAdapter()
     await adapter.revokeRole(userId, roleName, tenantId)
+    this.fireAudit({ action: 'user.revokeRole', role: roleName, userId, tenantId })
   }
 
   /**
@@ -691,6 +713,134 @@ export class PolicyEngine implements IPolicyEngine {
     const adapter = this.requireUserAdapter()
     const roles = await adapter.getUserRoles(userId, tenantId)
     return roles.some((r) => this.roles.has(r) && this.can(r, permission))
+  }
+
+  // ---------------------------------------------------------------------------
+  // Bulk mutation API
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Registers multiple roles at once. Each role is validated and added
+   * individually, so the first invalid role will throw without rolling back
+   * previously added roles in the same call.
+   *
+   * @returns `this` for chaining.
+   */
+  addRoles(roles: RoleDefinition[]): this {
+    for (const role of roles) {
+      this.addRole(role)
+    }
+    return this
+  }
+
+  /**
+   * Grants multiple permissions to a role in a single operation.
+   * The permission cache is invalidated once after all grants are applied.
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @throws {InvalidPermissionError} If any permission string is malformed.
+   * @returns `this` for chaining.
+   */
+  grantBulk(role: string, permissions: string[]): this {
+    const def = this.roles.get(role)
+    if (!def) throw new UnknownRoleError(role)
+    for (const permission of permissions) {
+      if (!validatePermission(permission)) throw new InvalidPermissionError(permission)
+    }
+    const existing = new Set(def.permissions)
+    for (const permission of permissions) {
+      if (!existing.has(permission)) {
+        def.permissions.push(permission)
+        existing.add(permission)
+      }
+      this.hooks.onGrant?.(role, permission)
+      this.fireAudit({ action: 'permission.grant', role, permission })
+      this.fireAndForget(this.adapter?.grantPermission(role, permission), 'grantPermission')
+    }
+    this.invalidateCache()
+    return this
+  }
+
+  /**
+   * Revokes multiple permissions from a role in a single operation.
+   * Only removes permissions from the role's own list — inherited permissions
+   * are unaffected.
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @throws {InvalidPermissionError} If any permission string is malformed.
+   * @returns `this` for chaining.
+   */
+  revokeBulk(role: string, permissions: string[]): this {
+    const def = this.roles.get(role)
+    if (!def) throw new UnknownRoleError(role)
+    for (const permission of permissions) {
+      if (!validatePermission(permission)) throw new InvalidPermissionError(permission)
+    }
+    const toRemove = new Set(permissions)
+    def.permissions = def.permissions.filter((p) => !toRemove.has(p))
+    this.invalidateCache()
+    for (const permission of permissions) {
+      this.hooks.onRevoke?.(role, permission)
+      this.fireAudit({ action: 'permission.revoke', role, permission })
+      this.fireAndForget(this.adapter?.revokePermission(role, permission), 'revokePermission')
+    }
+    return this
+  }
+
+  /**
+   * Explicitly denies multiple permissions for a role in a single operation.
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @throws {InvalidPermissionError} If any permission string is malformed.
+   * @returns `this` for chaining.
+   */
+  denyBulk(role: string, permissions: string[]): this {
+    if (!this.roles.has(role)) throw new UnknownRoleError(role)
+    for (const permission of permissions) {
+      if (!validatePermission(permission)) throw new InvalidPermissionError(permission)
+    }
+    if (!this.denies.has(role)) this.denies.set(role, new Set())
+    const denySet = this.denies.get(role)!
+    for (const permission of permissions) {
+      denySet.add(permission)
+      this.hooks.onDeny?.(role, permission)
+      this.fireAudit({ action: 'permission.deny', role, permission })
+      this.fireAndForget(this.adapter?.saveDeny(role, permission), 'saveDeny')
+    }
+    this.permCache.delete(role)
+    return this
+  }
+
+  /**
+   * Assigns multiple roles to a user in a single operation.
+   * Roles that are not registered in the engine will throw `UnknownRoleError`
+   * before any assignments are made.
+   *
+   * @throws {UnknownRoleError} If any role name is not registered.
+   * @throws {AdapterError} If no adapter is configured or it lacks user-role support.
+   */
+  async assignRoles(userId: string, roleNames: string[], tenantId?: string): Promise<void> {
+    for (const roleName of roleNames) {
+      if (!this.roles.has(roleName)) throw new UnknownRoleError(roleName)
+    }
+    const adapter = this.requireUserAdapter()
+    for (const roleName of roleNames) {
+      await adapter.assignRole(userId, roleName, tenantId)
+      this.fireAudit({ action: 'user.assignRole', role: roleName, userId, tenantId })
+    }
+  }
+
+  /**
+   * Revokes multiple roles from a user in a single operation.
+   *
+   * @throws {AdapterError} If no adapter is configured or it lacks user-role support.
+   */
+  async revokeRoles(userId: string, roleNames: string[], tenantId?: string): Promise<void> {
+    const adapter = this.requireUserAdapter()
+    for (const roleName of roleNames) {
+      await adapter.revokeRole(userId, roleName, tenantId)
+      this.fireAudit({ action: 'user.revokeRole', role: roleName, userId, tenantId })
+    }
   }
 
   // ---------------------------------------------------------------------------

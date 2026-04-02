@@ -19,6 +19,8 @@ export default defineConfig({
     // UI framework integrations
     "react": "src/react.ts",
     "vue": "src/vue.ts",
+    // Testing utilities (not included in main bundle)
+    "testing": "src/testing.ts",
   },
   format: ["esm", "cjs"],
   dts: true,
