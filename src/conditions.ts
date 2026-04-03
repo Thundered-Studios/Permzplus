@@ -70,7 +70,30 @@ export function evalCondition(
     return condition(subject, ctx)
   }
   if (typeof subject !== 'object' || subject === null) return false
-  return matchesCondition(subject as Record<string, unknown>, condition)
+  return matchesCondition(subject as Record<string, unknown>, condition, ctx)
+}
+
+/**
+ * Resolves a dot-path string (e.g. `"user.id"`) against `ctx`.
+ * Returns `undefined` if any segment is missing.
+ */
+function resolvePath(path: string, ctx: Record<string, unknown>): unknown {
+  let cur: unknown = ctx
+  for (const part of path.split('.')) cur = (cur as Record<string, unknown>)?.[part]
+  return cur
+}
+
+/**
+ * Expands `{{dot.path}}` macros in `val` using values from `ctx`.
+ * A string consisting of a single macro (e.g. `"{{user.id}}"`) is replaced
+ * with the resolved value directly (preserving its original type).
+ * Mixed strings (e.g. `"prefix-{{user.id}}"`) are coerced to strings.
+ */
+export function expandMacros(val: string, ctx: Record<string, unknown>): unknown {
+  if (!val.includes('{{')) return val
+  const single = val.match(/^\{\{([^}]+)\}\}$/)
+  if (single) return resolvePath(single[1].trim(), ctx)
+  return val.replace(/\{\{([^}]+)\}\}/g, (_, p) => String(resolvePath(p.trim(), ctx) ?? ''))
 }
 
 /**
@@ -84,20 +107,21 @@ export function evalCondition(
 export function matchesCondition(
   subject: Record<string, unknown>,
   condition: SubjectConditionObject,
+  ctx?: Record<string, unknown>,
 ): boolean {
   for (const [key, value] of Object.entries(condition)) {
     if (key === '$and') {
       if (!Array.isArray(value)) return false
-      if (!(value as SubjectConditionObject[]).every((c) => matchesCondition(subject, c))) return false
+      if (!(value as SubjectConditionObject[]).every((c) => matchesCondition(subject, c, ctx))) return false
     } else if (key === '$or') {
       if (!Array.isArray(value)) return false
-      if (!(value as SubjectConditionObject[]).some((c) => matchesCondition(subject, c))) return false
+      if (!(value as SubjectConditionObject[]).some((c) => matchesCondition(subject, c, ctx))) return false
     } else if (key === '$nor') {
       if (!Array.isArray(value)) return false
-      if ((value as SubjectConditionObject[]).some((c) => matchesCondition(subject, c))) return false
+      if ((value as SubjectConditionObject[]).some((c) => matchesCondition(subject, c, ctx))) return false
     } else {
       const fieldValue = subject[key]
-      if (!evalFieldValue(fieldValue, value)) return false
+      if (!evalFieldValue(fieldValue, value, ctx)) return false
     }
   }
   return true
@@ -107,7 +131,9 @@ export function matchesCondition(
 // Internal field evaluation
 // ---------------------------------------------------------------------------
 
-function evalFieldValue(fieldValue: unknown, condition: unknown): boolean {
+function evalFieldValue(fieldValue: unknown, rawCondition: unknown, ctx?: Record<string, unknown>): boolean {
+  // Expand possession macros in string conditions (e.g. "{{user.id}}")
+  const condition = ctx && typeof rawCondition === 'string' ? expandMacros(rawCondition, ctx) : rawCondition
   // Direct equality — handles strings, numbers, booleans, null
   if (condition === null || typeof condition !== 'object') {
     return fieldValue === condition
