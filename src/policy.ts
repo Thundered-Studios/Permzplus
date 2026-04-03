@@ -13,6 +13,8 @@ import type {
 import { PermissionDeniedError, UnknownRoleError, InvalidPermissionError, AdapterError } from './errors'
 import { validatePermission, matchesPermission } from './permissions'
 import { PermissionContext } from './context'
+import type { SubjectCondition } from './conditions'
+import { evalCondition } from './conditions'
 
 export class PolicyEngine implements IPolicyEngine {
   private roles: Map<string, RoleDefinition>
@@ -24,6 +26,11 @@ export class PolicyEngine implements IPolicyEngine {
   private readonly auditLogger?: AuditLogger
   /** Cached resolved permission sets, keyed by role name. Cleared on any mutation. */
   private permCache: Map<string, Set<string>>
+  /**
+   * Per-rule subject conditions. Key: `"role\x00permission"`, value: array of
+   * conditions registered via `defineRule()`.
+   */
+  private ruleConditions: Map<string, SubjectCondition[]>
 
   constructor(options?: PolicyOptions) {
     this.roles = new Map()
@@ -33,6 +40,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.debugMode = options?.debug ?? false
     this.auditLogger = options?.audit
     this.permCache = new Map()
+    this.ruleConditions = new Map()
 
     if (options?.roles) {
       for (const role of options.roles) {
@@ -170,6 +178,52 @@ export class PolicyEngine implements IPolicyEngine {
   }
 
   // ---------------------------------------------------------------------------
+  // ABAC — rule conditions
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Attaches a subject condition to a role+permission pair. When `can()` is
+   * called with a subject, ALL registered conditions for the matching rule must
+   * pass for the check to succeed.
+   *
+   * Multiple calls for the same role+permission accumulate conditions (AND semantics).
+   * Use object-form conditions when you also need `accessibleBy()` query building.
+   *
+   * @example Function condition (runtime only)
+   * ```ts
+   * policy.defineRule('MEMBER', 'posts:edit',
+   *   (post, ctx) => post.authorId === ctx?.userId)
+   * ```
+   *
+   * @example Object condition (serializable + query-buildable)
+   * ```ts
+   * policy.defineRule('MEMBER', 'posts:read', { status: 'published' })
+   * policy.defineRule('MODERATOR', 'posts:edit', { status: { $in: ['draft', 'pending'] } })
+   * ```
+   *
+   * @throws {UnknownRoleError} If the role is not registered.
+   * @throws {InvalidPermissionError} If the permission string is malformed.
+   * @returns `this` for chaining.
+   */
+  defineRule(role: string, permission: string, condition: SubjectCondition): this {
+    if (!this.roles.has(role)) throw new UnknownRoleError(role)
+    if (!validatePermission(permission)) throw new InvalidPermissionError(permission)
+    const key = `${role}\x00${permission}`
+    if (!this.ruleConditions.has(key)) this.ruleConditions.set(key, [])
+    this.ruleConditions.get(key)!.push(condition)
+    return this
+  }
+
+  /**
+   * Returns all conditions registered for a role+permission pair via `defineRule()`.
+   * Used internally by `accessibleBy()`.
+   */
+  getConditionsFor(role: string, permission: string): SubjectCondition[] {
+    const key = `${role}\x00${permission}`
+    return this.ruleConditions.get(key) ?? []
+  }
+
+  // ---------------------------------------------------------------------------
   // Permission group API
   // ---------------------------------------------------------------------------
 
@@ -200,10 +254,20 @@ export class PolicyEngine implements IPolicyEngine {
    * or through role-level inheritance. Wildcard patterns (e.g. `*`, `posts:*`) are
    * supported on the stored permission side.
    *
+   * When a `subject` is provided, any conditions registered via `defineRule()` for
+   * the matching rule are evaluated against it. All conditions must pass (AND logic).
+   * Pass `ctx` to supply runtime values (e.g. `{ userId }`) to function conditions.
+   *
+   * @example Subject-aware check
+   * ```ts
+   * policy.defineRule('MEMBER', 'posts:edit', (post, ctx) => post.authorId === ctx?.userId)
+   * policy.can('MEMBER', 'posts:edit', post, { userId: 'u1' })  // true only if post.authorId === 'u1'
+   * ```
+   *
    * @throws {UnknownRoleError} If the role is not registered.
    * @throws {InvalidPermissionError} If the permission string is malformed.
    */
-  can(role: string, permission: string): boolean {
+  can(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): boolean {
     if (!this.roles.has(role)) {
       throw new UnknownRoleError(role)
     }
@@ -212,42 +276,67 @@ export class PolicyEngine implements IPolicyEngine {
     }
 
     const effective = this.resolveEffectivePermissions(role)
-    let result = false
+    let matched = false
+    let matchedPattern: string | undefined
     for (const pattern of effective) {
       if (matchesPermission(permission, pattern)) {
-        result = true
+        matched = true
+        matchedPattern = pattern
         break
+      }
+    }
+
+    if (!matched) {
+      if (this.debugMode) {
+        // eslint-disable-next-line no-console
+        console.debug(`[permzplus] can("${role}", "${permission}") → false | No permission matching "${permission}" found for role "${role}"`)
+      }
+      return false
+    }
+
+    // Evaluate subject conditions if a subject was provided
+    if (subject !== undefined) {
+      const conditions = this.getConditionsFor(role, matchedPattern ?? permission)
+      if (conditions.length > 0) {
+        const conditionsMet = conditions.every((c) => evalCondition(c, subject, ctx))
+        if (this.debugMode) {
+          // eslint-disable-next-line no-console
+          console.debug(`[permzplus] can("${role}", "${permission}") → ${conditionsMet} | Conditions ${conditionsMet ? 'passed' : 'failed'} for subject`)
+        }
+        return conditionsMet
       }
     }
 
     if (this.debugMode) {
       const { reason } = this.canWithReason(role, permission)
       // eslint-disable-next-line no-console
-      console.debug(`[permzplus] can("${role}", "${permission}") → ${result} | ${reason}`)
+      console.debug(`[permzplus] can("${role}", "${permission}") → true | ${reason}`)
     }
 
-    return result
+    return true
   }
 
   /**
    * Returns `true` if the given role does NOT have the specified permission.
+   * Accepts an optional subject and context for ABAC condition evaluation.
    *
    * @throws {UnknownRoleError} If the role is not registered.
    * @throws {InvalidPermissionError} If the permission string is malformed.
    */
-  cannot(role: string, permission: string): boolean {
-    return !this.can(role, permission)
+  cannot(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): boolean {
+    return !this.can(role, permission, subject, ctx)
   }
 
   /**
    * Asserts that the given role has the specified permission.
+   * Accepts an optional subject and context for ABAC condition evaluation.
    *
    * @throws {PermissionDeniedError} If the role lacks the permission.
    * @throws {UnknownRoleError} If the role is not registered.
    * @throws {InvalidPermissionError} If the permission string is malformed.
    */
-  assert(role: string, permission: string): void {
-    if (!this.can(role, permission)) {
+  assert(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): void {
+    if (!this.can(role, permission, subject, ctx)) {
       throw new PermissionDeniedError(role, permission)
     }
   }
@@ -427,12 +516,13 @@ export class PolicyEngine implements IPolicyEngine {
 
   /**
    * Like `can()` but returns `false` instead of throwing for unknown or empty
-   * roles. Safe to call for unauthenticated users.
+   * roles. Safe to call for unauthenticated users. Accepts an optional subject
+   * and context for ABAC condition evaluation.
    */
-  safeCan(role: string, permission: string): boolean {
+  safeCan(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): boolean {
     if (!role || !this.roles.has(role)) return false
     try {
-      return this.can(role, permission)
+      return this.can(role, permission, subject, ctx)
     } catch {
       return false
     }

@@ -1,5 +1,7 @@
 export type RoleLevel = number
 
+export type { SubjectCondition, SubjectConditionFn, SubjectConditionObject } from './conditions'
+
 // ---------------------------------------------------------------------------
 // Audit logging
 // ---------------------------------------------------------------------------
@@ -152,9 +154,9 @@ export interface PermzAdapter {
 
 /** Minimal interface exposed to PermissionContext — avoids circular imports. */
 export interface IPolicyEngine {
-  can(role: string, permission: string): boolean
-  cannot(role: string, permission: string): boolean
-  assert(role: string, permission: string): void
+  can(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): boolean
+  cannot(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): boolean
+  assert(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): void
   getRoleLevel(role: string): number
   isAtLeast(role: string, minRole: string): boolean
   /** Returns true if the role has ALL of the given permissions. */
@@ -175,4 +177,9 @@ export interface IPolicyEngine {
   safeCan(role: string, permission: string): boolean
   /** Returns field names within `resource` that `role` can perform `action` on (via `resource.field:action` permissions). */
   permittedFieldsOf(role: string, resource: string, action: string): string[]
+  /**
+   * Returns all conditions (function and object) registered for a role+permission pair
+   * via `defineRule()`. Used by `accessibleBy()` to build database WHERE clauses.
+   */
+  getConditionsFor(role: string, permission: string): Array<import('./conditions').SubjectCondition>
 }

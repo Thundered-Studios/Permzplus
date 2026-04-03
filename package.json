@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "description": "Hierarchical role-based permissions library for web apps",
   "keywords": [
     "permissions",
@@ -95,6 +95,11 @@
       "types": "./dist/vue.d.ts",
       "import": "./dist/vue.js",
       "require": "./dist/vue.cjs"
+    },
+    "./query": {
+      "types": "./dist/query.d.ts",
+      "import": "./dist/query.js",
+      "require": "./dist/query.cjs"
     },
     "./testing": {
       "types": "./dist/testing.d.ts",

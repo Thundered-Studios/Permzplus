@@ -19,6 +19,8 @@ export default defineConfig({
     // UI framework integrations
     "react": "src/react.ts",
     "vue": "src/vue.ts",
+    // Query builder (ABAC → database WHERE clauses)
+    "query": "src/query.ts",
     // Testing utilities (not included in main bundle)
     "testing": "src/testing.ts",
   },

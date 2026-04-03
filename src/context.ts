@@ -31,6 +31,11 @@ export class PermissionContext {
   readonly resourceId?: string
 
   private engine: IPolicyEngine
+  /**
+   * Context object forwarded to function conditions in `defineRule()`.
+   * Automatically includes `userId` and `tenantId` from context options.
+   */
+  private readonly conditionCtx: Record<string, unknown>
 
   constructor(
     roles: string | string[],
@@ -41,20 +46,47 @@ export class PermissionContext {
     this.engine = engine
     this.userId = opts?.userId
     this.resourceId = opts?.resourceId
+    this.conditionCtx = {
+      ...(opts?.userId !== undefined ? { userId: opts.userId } : {}),
+      ...(opts?.tenantId !== undefined ? { tenantId: opts.tenantId } : {}),
+    }
   }
 
   /**
    * Returns `true` if ANY of the bound roles has the given permission.
-   * An optional `condition` function can enforce resource-level rules on top of
-   * the role check — if provided, both the permission check AND the condition
-   * must pass for `can` to return `true`.
    *
-   * @example
-   * // Resource-ownership check
+   * Accepts two optional arguments for ABAC:
+   * - `subject` — the resource being accessed (e.g. a post object). When provided,
+   *   any conditions registered via `defineRule()` are evaluated against it.
+   * - `condition` — a lightweight runtime check applied on top of the role+subject
+   *   check (e.g. ownership guard). Both must pass for `can` to return `true`.
+   *
+   * @example Subject-aware (uses defineRule conditions)
+   * ```ts
+   * ctx.can('posts:edit', post)
+   * ```
+   *
+   * @example Runtime condition callback (legacy, still supported)
+   * ```ts
    * ctx.can('posts:edit', () => post.authorId === ctx.userId)
+   * ```
+   *
+   * @example Both
+   * ```ts
+   * ctx.can('posts:edit', post, () => extraCheck())
+   * ```
    */
-  can(permission: string, condition?: () => boolean): boolean {
-    const hasPermission = this.roles.some((r) => this.engine.can(r, permission))
+  can(permission: string, subjectOrCondition?: unknown | (() => boolean), condition?: () => boolean): boolean {
+    // Detect legacy single-callback overload: can('perm', () => bool)
+    if (typeof subjectOrCondition === 'function') {
+      const hasPermission = this.roles.some((r) => this.engine.can(r, permission))
+      if (!hasPermission) return false
+      return (subjectOrCondition as () => boolean)()
+    }
+
+    // Subject-aware path
+    const subject = subjectOrCondition
+    const hasPermission = this.roles.some((r) => this.engine.can(r, permission, subject, this.conditionCtx))
     if (!hasPermission) return false
     if (condition !== undefined) return condition()
     return true
@@ -62,19 +94,18 @@ export class PermissionContext {
 
   /**
    * Returns `true` if NONE of the bound roles has the given permission,
-   * or if the optional condition fails.
+   * or if the optional condition/subject check fails.
    */
-  cannot(permission: string, condition?: () => boolean): boolean {
-    return !this.can(permission, condition)
+  cannot(permission: string, subjectOrCondition?: unknown | (() => boolean), condition?: () => boolean): boolean {
+    return !this.can(permission, subjectOrCondition as unknown, condition)
   }
 
   /**
-   * Asserts that at least one of the bound roles has the given permission (and
-   * that the optional condition passes). Throws a `PermissionDeniedError` if
-   * either check fails.
+   * Asserts that at least one of the bound roles has the given permission.
+   * Throws a `PermissionDeniedError` if the check fails.
    */
-  assert(permission: string, condition?: () => boolean): void {
-    if (!this.can(permission, condition)) {
+  assert(permission: string, subjectOrCondition?: unknown | (() => boolean), condition?: () => boolean): void {
+    if (!this.can(permission, subjectOrCondition as unknown, condition)) {
       throw new PermissionDeniedError(this.roles.join(' | '), permission)
     }
   }

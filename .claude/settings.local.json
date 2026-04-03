@@ -10,7 +10,9 @@
       "Bash(pnpm test:*)",
       "Bash(pnpm add:*)",
       "Bash(pnpm build:*)",
-      "Bash(node -e \":*)"
+      "Bash(node -e \":*)",
+      "Bash(wc -l \"C:\\\\Users\\\\creep\\\\Permzplus\\\\tests\"/*.ts)",
+      "Bash(npx tsc:*)"
     ]
   }
 }
