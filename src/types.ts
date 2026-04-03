@@ -93,6 +93,13 @@ export interface PolicyOptions {
   audit?: AuditLogger
 }
 
+export interface DelegateOptions {
+  /** Restrict delegated access to only these permissions (whitelist). If omitted, all delegatee permissions apply. */
+  scope?: string[]
+  /** Optional metadata stored on the context for audit purposes. */
+  delegatedBy?: string
+}
+
 export interface ContextOptions {
   role?: string
   /** Multiple roles — `can` returns true if ANY role satisfies the check. */
@@ -106,6 +113,11 @@ export interface ContextOptions {
    * Enables ABAC+ patterns like `(resource, ctx) => ctx.user.dept === resource.dept`.
    */
   user?: Record<string, unknown>
+}
+
+export interface RoleAssignment {
+  role: string
+  expiresAt?: Date
 }
 
 /**
@@ -142,7 +154,7 @@ export interface PermzAdapter {
    * `PolicyEngine.assignRole()`, `revokeRole()`, `canUser()`, and
    * `createUserContext()`.
    */
-  assignRole?(userId: string, roleName: string, tenantId?: string): Promise<void>
+  assignRole?(userId: string, roleName: string, tenantId?: string, options?: { expiresAt?: Date }): Promise<void>
 
   /**
    * Revokes a role from a user.

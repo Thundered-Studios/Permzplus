@@ -1,4 +1,4 @@
-import type { PermzAdapter, RoleDefinition } from './types'
+import type { PermzAdapter, RoleDefinition, RoleAssignment } from './types'
 
 export abstract class BaseAdapter implements PermzAdapter {
   abstract getRoles(): Promise<RoleDefinition[]>
@@ -29,9 +29,9 @@ export class InMemoryAdapter extends BaseAdapter {
   /**
    * User-role assignment store.
    * Key format: `"<tenantId>:<userId>"` (tenantId defaults to `""` when absent).
-   * Value: set of role names assigned to that user in that tenant context.
+   * Value: map of role name -> assignment metadata (including optional expiry).
    */
-  private userRoles: Map<string, Set<string>> = new Map()
+  private userRoles: Map<string, Map<string, RoleAssignment>> = new Map()
 
   // ---------------------------------------------------------------------------
   // Role definition methods
@@ -93,13 +93,15 @@ export class InMemoryAdapter extends BaseAdapter {
   /**
    * Assigns a role to a user. When `tenantId` is provided the assignment is
    * scoped to that tenant so two tenants can give the same user different roles.
+   * When `options.expiresAt` is provided, the assignment will be automatically
+   * filtered out after that date.
    */
-  async assignRole(userId: string, roleName: string, tenantId?: string): Promise<void> {
+  async assignRole(userId: string, roleName: string, tenantId?: string, options?: { expiresAt?: Date }): Promise<void> {
     const key = this.userKey(userId, tenantId)
     if (!this.userRoles.has(key)) {
-      this.userRoles.set(key, new Set())
+      this.userRoles.set(key, new Map())
     }
-    this.userRoles.get(key)!.add(roleName)
+    this.userRoles.get(key)!.set(roleName, { role: roleName, expiresAt: options?.expiresAt })
   }
 
   /** Revokes a role from a user. No-op if the assignment does not exist. */
@@ -108,9 +110,33 @@ export class InMemoryAdapter extends BaseAdapter {
     this.userRoles.get(key)?.delete(roleName)
   }
 
-  /** Returns all roles assigned to the user, optionally scoped to a tenant. */
+  /** Returns all roles assigned to the user, optionally scoped to a tenant. Expired assignments are filtered out. */
   async getUserRoles(userId: string, tenantId?: string): Promise<string[]> {
     const key = this.userKey(userId, tenantId)
-    return Array.from(this.userRoles.get(key) ?? [])
+    const assignments = this.userRoles.get(key)
+    if (!assignments) return []
+    const now = new Date()
+    const roles: string[] = []
+    for (const [roleName, assignment] of assignments) {
+      if (!assignment.expiresAt || assignment.expiresAt >= now) {
+        roles.push(roleName)
+      }
+    }
+    return roles
+  }
+
+  /**
+   * Removes all expired role assignments from the internal store.
+   * Useful for periodic cleanup to prevent unbounded memory growth.
+   */
+  cleanExpiredAssignments(): void {
+    const now = new Date()
+    for (const assignments of this.userRoles.values()) {
+      for (const [roleName, assignment] of assignments) {
+        if (assignment.expiresAt && assignment.expiresAt < now) {
+          assignments.delete(roleName)
+        }
+      }
+    }
   }
 }
