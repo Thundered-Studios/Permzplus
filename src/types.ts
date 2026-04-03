@@ -101,6 +101,11 @@ export interface ContextOptions {
   resourceId?: string
   /** Optional tenant ID for multi-tenant scoping. */
   tenantId?: string
+  /**
+   * Arbitrary user attributes forwarded to function conditions as `ctx.user`.
+   * Enables ABAC+ patterns like `(resource, ctx) => ctx.user.dept === resource.dept`.
+   */
+  user?: Record<string, unknown>
 }
 
 /**

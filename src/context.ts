@@ -49,6 +49,7 @@ export class PermissionContext {
     this.conditionCtx = {
       ...(opts?.userId !== undefined ? { userId: opts.userId } : {}),
       ...(opts?.tenantId !== undefined ? { tenantId: opts.tenantId } : {}),
+      ...(opts?.user !== undefined ? { user: opts.user } : {}),
     }
   }
 
