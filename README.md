@@ -1,4 +1,5 @@
 # permzplus
+[![Socket Badge](https://badge.socket.dev/npm/package/permzplus/2.1.5)](https://badge.socket.dev/npm/package/permzplus/2.1.5)
 
 **Role-based and attribute-based permissions for TypeScript/JavaScript.**
 
