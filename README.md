@@ -394,6 +394,19 @@ audit.events
 
 ---
 
+## Spread the Word
+
+If permzplus saves you time, help others find it:
+
+- **Star the repo** on [GitHub](https://github.com/PermzPlus/Permzplus) — it helps with discoverability
+- **Share it** with your team, in Discord servers, or on Twitter/X
+- **Write about it** — blog posts, dev.to articles, or Stack Overflow answers go a long way
+- **Open issues or PRs** — feedback and contributions make the library better for everyone
+
+The project is maintained by a small team. Every star, share, and mention genuinely helps.
+
+---
+
 ## License
 
 MIT
