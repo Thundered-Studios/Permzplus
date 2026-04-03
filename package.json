@@ -8,7 +8,19 @@
     "roles",
     "authorization",
     "acl",
-    "multi-tenant"
+    "multi-tenant",
+    "typescript",
+    "access-control",
+    "casl-alternative",
+    "react",
+    "vue",
+    "firebase",
+    "fastify",
+    "hono",
+    "nestjs",
+    "prisma",
+    "drizzle",
+    "mongoose"
   ],
   "homepage": "https://github.com/Thundered-Studios/Permzplus#readme",
   "bugs": {
