@@ -28,6 +28,8 @@ export default defineConfig({
     "query": "src/query.ts",
     // Testing utilities (not included in main bundle)
     "testing": "src/testing.ts",
+    // Policy validator (separate export — tree-shakes out of prod bundles)
+    "validator": "src/validator.ts",
   },
   format: ["esm", "cjs"],
   dts: true,

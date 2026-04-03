@@ -130,6 +130,11 @@
       "types": "./dist/testing.d.ts",
       "import": "./dist/testing.js",
       "require": "./dist/testing.cjs"
+    },
+    "./validator": {
+      "types": "./dist/validator.d.ts",
+      "import": "./dist/validator.js",
+      "require": "./dist/validator.cjs"
     }
   },
   "files": [
