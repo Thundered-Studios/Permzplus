@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "3.0.0",
+  "version": "3.1.0",
   "description": "RBAC + ABAC permissions for TypeScript — hierarchical roles, MongoDB-style subject conditions, and database query generation",
   "keywords": [
     "permissions",

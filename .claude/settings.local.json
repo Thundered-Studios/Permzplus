@@ -12,7 +12,13 @@
       "Bash(pnpm build:*)",
       "Bash(node -e \":*)",
       "Bash(wc -l \"C:\\\\Users\\\\creep\\\\Permzplus\\\\tests\"/*.ts)",
-      "Bash(npx tsc:*)"
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npm publish:*)",
+      "Bash(wc -l /c/Users/creep/Permzplus/src/policy.ts /c/Users/creep/Permzplus/tests/*.ts)",
+      "Bash(cat /c/Users/creep/Permzplus/.github/workflows/*.yml)",
+      "Bash(git:*)",
+      "Bash(npm test:*)"
     ]
   }
 }
