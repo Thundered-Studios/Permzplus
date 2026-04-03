@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "2.1.2",
+  "version": "2.1.3",
   "description": "Hierarchical role-based permissions library for web apps",
   "keywords": [
     "permissions",
