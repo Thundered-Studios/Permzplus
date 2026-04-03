@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "2.1.5",
+  "version": "3.0.0",
   "description": "RBAC + ABAC permissions for TypeScript — hierarchical roles, MongoDB-style subject conditions, and database query generation",
   "keywords": [
     "permissions",
@@ -70,6 +70,16 @@
       "types": "./dist/adapters/fastify.d.ts",
       "import": "./dist/adapters/fastify.js",
       "require": "./dist/adapters/fastify.cjs"
+    },
+    "./adapters/graphql": {
+      "types": "./dist/adapters/graphql.d.ts",
+      "import": "./dist/adapters/graphql.js",
+      "require": "./dist/adapters/graphql.cjs"
+    },
+    "./adapters/trpc": {
+      "types": "./dist/adapters/trpc.d.ts",
+      "import": "./dist/adapters/trpc.js",
+      "require": "./dist/adapters/trpc.cjs"
     },
     "./adapters/hono": {
       "types": "./dist/adapters/hono.d.ts",

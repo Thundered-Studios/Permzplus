@@ -19,6 +19,8 @@ export default defineConfig({
     "adapters/sequelize": "src/adapters/sequelize.ts",
     // Framework guards
     "adapters/fastify": "src/adapters/fastify.ts",
+    "adapters/graphql": "src/adapters/graphql.ts",
+    "adapters/trpc": "src/adapters/trpc.ts",
     "adapters/hono": "src/adapters/hono.ts",
     "adapters/nest": "src/adapters/nest.ts",
     // UI framework integrations
