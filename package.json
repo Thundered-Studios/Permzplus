@@ -86,6 +86,31 @@
       "import": "./dist/adapters/firebase.js",
       "require": "./dist/adapters/firebase.cjs"
     },
+    "./adapters/supabase": {
+      "types": "./dist/adapters/supabase.d.ts",
+      "import": "./dist/adapters/supabase.js",
+      "require": "./dist/adapters/supabase.cjs"
+    },
+    "./adapters/redis": {
+      "types": "./dist/adapters/redis.d.ts",
+      "import": "./dist/adapters/redis.js",
+      "require": "./dist/adapters/redis.cjs"
+    },
+    "./adapters/typeorm": {
+      "types": "./dist/adapters/typeorm.d.ts",
+      "import": "./dist/adapters/typeorm.js",
+      "require": "./dist/adapters/typeorm.cjs"
+    },
+    "./adapters/knex": {
+      "types": "./dist/adapters/knex.d.ts",
+      "import": "./dist/adapters/knex.js",
+      "require": "./dist/adapters/knex.cjs"
+    },
+    "./adapters/sequelize": {
+      "types": "./dist/adapters/sequelize.d.ts",
+      "import": "./dist/adapters/sequelize.js",
+      "require": "./dist/adapters/sequelize.cjs"
+    },
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
@@ -138,10 +163,16 @@
   },
   "peerDependencies": {
     "@prisma/client": ">=5.0.0",
+    "@supabase/supabase-js": ">=2.0.0",
     "drizzle-orm": ">=0.29.0",
     "firebase": ">=9.0.0",
+    "ioredis": ">=4.0.0",
+    "knex": ">=2.0.0",
     "mongoose": ">=7.0.0",
     "react": ">=18.0.0",
+    "redis": ">=4.0.0",
+    "sequelize": ">=6.0.0",
+    "typeorm": ">=0.3.0",
     "vue": ">=3.0.0"
   },
   "peerDependenciesMeta": {
@@ -161,6 +192,24 @@
       "optional": true
     },
     "firebase": {
+      "optional": true
+    },
+    "@supabase/supabase-js": {
+      "optional": true
+    },
+    "ioredis": {
+      "optional": true
+    },
+    "redis": {
+      "optional": true
+    },
+    "typeorm": {
+      "optional": true
+    },
+    "knex": {
+      "optional": true
+    },
+    "sequelize": {
       "optional": true
     }
   },

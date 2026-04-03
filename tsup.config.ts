@@ -12,6 +12,11 @@ export default defineConfig({
     "adapters/drizzle": "src/adapters/drizzle.ts",
     "adapters/memory": "src/adapters/memory.ts",
     "adapters/firebase": "src/adapters/firebase.ts",
+    "adapters/supabase": "src/adapters/supabase.ts",
+    "adapters/redis": "src/adapters/redis.ts",
+    "adapters/typeorm": "src/adapters/typeorm.ts",
+    "adapters/knex": "src/adapters/knex.ts",
+    "adapters/sequelize": "src/adapters/sequelize.ts",
     // Framework guards
     "adapters/fastify": "src/adapters/fastify.ts",
     "adapters/hono": "src/adapters/hono.ts",
