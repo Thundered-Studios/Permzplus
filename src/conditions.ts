@@ -19,8 +19,48 @@
  * ```
  *
  * Supported operators: `$eq`, `$ne`, `$gt`, `$gte`, `$lt`, `$lte`, `$in`, `$nin`,
- * `$exists`, `$and`, `$or`, `$nor`.
+ * `$exists`, `$and`, `$or`, `$nor`, `$after`, `$before`, `$between`.
+ * Additional operators can be registered via `registerOperator()`.
  */
+
+// ---------------------------------------------------------------------------
+// Custom operator registry
+// ---------------------------------------------------------------------------
+
+type OperatorFn = (fieldValue: unknown, operand: unknown, ctx?: Record<string, unknown>) => boolean
+
+const customOperators: Map<string, OperatorFn> = new Map()
+
+/**
+ * Registers a custom MongoDB-style operator for use in object conditions.
+ * The name must start with `$`.
+ *
+ * @example
+ * registerOperator('$startsWith', (fieldValue, operand) =>
+ *   typeof fieldValue === 'string' && fieldValue.startsWith(operand as string)
+ * )
+ */
+export function registerOperator(name: string, fn: OperatorFn): void {
+  if (!name.startsWith('$')) throw new Error(`Operator name must start with "$", got: ${name}`)
+  customOperators.set(name, fn)
+}
+
+// ---------------------------------------------------------------------------
+// Built-in time operators (registered at module load)
+// ---------------------------------------------------------------------------
+
+function toTime(v: unknown): number {
+  if (typeof v === 'number') return v
+  return new Date(v as string).getTime()
+}
+
+registerOperator('$after', (fieldValue, operand) => toTime(fieldValue) > toTime(operand))
+registerOperator('$before', (fieldValue, operand) => toTime(fieldValue) < toTime(operand))
+registerOperator('$between', (fieldValue, operand) => {
+  if (!Array.isArray(operand) || operand.length !== 2) return false
+  const t = toTime(fieldValue)
+  return t >= toTime(operand[0]) && t <= toTime(operand[1])
+})
 
 // ---------------------------------------------------------------------------
 // Types
@@ -190,9 +230,15 @@ function evalFieldValue(fieldValue: unknown, rawCondition: unknown, ctx?: Record
         if (!re.test(fieldValue)) return false
         break
       }
-      default:
+      default: {
+        const custom = customOperators.get(op)
+        if (custom) {
+          if (!custom(fieldValue, operand, ctx)) return false
+          break
+        }
         // Unknown operator — treat as no-match to be safe
         return false
+      }
     }
   }
   return true
