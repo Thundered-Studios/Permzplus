@@ -403,7 +403,7 @@ If permzplus saves you time, help others find it:
 - **Write about it** — blog posts, dev.to articles, or Stack Overflow answers go a long way
 - **Open issues or PRs** — feedback and contributions make the library better for everyone
 
-The project is maintained by a small team. Every star, share, and mention genuinely helps.
+The project is solo-maintained. Every star, share, and mention genuinely helps.
 
 ---
 
