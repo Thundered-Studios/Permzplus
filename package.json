@@ -1,7 +1,7 @@
 {
   "name": "permzplus",
-  "version": "2.1.4",
-  "description": "Hierarchical role-based permissions library for web apps",
+  "version": "2.1.5",
+  "description": "RBAC + ABAC permissions for TypeScript — hierarchical roles, MongoDB-style subject conditions, and database query generation",
   "keywords": [
     "permissions",
     "rbac",
