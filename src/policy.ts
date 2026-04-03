@@ -565,6 +565,22 @@ export class PolicyEngine implements IPolicyEngine {
   }
 
   /**
+   * Returns a copy of `obj` containing only the fields that `role` is allowed
+   * to perform `action` on within `resource` (via `resource.field:action` permissions).
+   *
+   * @example
+   * policy.addRole({ name: 'EDITOR', level: 1, permissions: ['post.title:read', 'post.body:read'] })
+   * policy.filterFields('EDITOR', { title: 'hi', body: 'world', secret: 'x' }, 'post', 'read')
+   * // → { title: 'hi', body: 'world' }
+   */
+  filterFields(role: string, obj: Record<string, unknown>, resource: string, action: string): Record<string, unknown> {
+    const allowed = new Set(this.permittedFieldsOf(role, resource, action))
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(obj)) if (allowed.has(k)) out[k] = obj[k]
+    return out
+  }
+
+  /**
    * Creates a `PermissionContext` for a user by fetching their assigned roles
    * from the adapter. Roles that no longer exist in the engine are silently
    * filtered out (stale assignment data).

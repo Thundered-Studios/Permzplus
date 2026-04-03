@@ -156,6 +156,20 @@ export class PermissionContext {
   }
 
   /**
+   * Returns a copy of `obj` containing only the fields that ANY of the bound
+   * roles is allowed to perform `action` on within `resource`.
+   */
+  filterFields(obj: Record<string, unknown>, resource: string, action: string): Record<string, unknown> {
+    const allowed = new Set<string>()
+    for (const r of this.roles) {
+      for (const f of this.engine.permittedFieldsOf(r, resource, action)) allowed.add(f)
+    }
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(obj)) if (allowed.has(k)) out[k] = obj[k]
+    return out
+  }
+
+  /**
    * Checks the permission against the primary role and returns a
    * `PermissionCheckResult` with a human-readable reason. For multi-role
    * contexts this checks the first role that returns `true`, or the primary

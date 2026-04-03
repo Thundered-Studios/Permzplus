@@ -177,6 +177,8 @@ export interface IPolicyEngine {
   safeCan(role: string, permission: string): boolean
   /** Returns field names within `resource` that `role` can perform `action` on (via `resource.field:action` permissions). */
   permittedFieldsOf(role: string, resource: string, action: string): string[]
+  /** Returns a copy of `obj` containing only the fields `role` is allowed to `action` on `resource`. */
+  filterFields(role: string, obj: Record<string, unknown>, resource: string, action: string): Record<string, unknown>
   /**
    * Returns all conditions (function and object) registered for a role+permission pair
    * via `defineRule()`. Used by `accessibleBy()` to build database WHERE clauses.
