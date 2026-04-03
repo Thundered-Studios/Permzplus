@@ -1,6 +1,7 @@
 import type {
   PolicyOptions,
   ContextOptions,
+  DelegateOptions,
   RoleDefinition,
   PermzAdapter,
   IPolicyEngine,
@@ -15,6 +16,35 @@ import { validatePermission, matchesPermission } from './permissions'
 import { PermissionContext } from './context'
 import type { SubjectCondition } from './conditions'
 import { evalCondition } from './conditions'
+
+// ---------------------------------------------------------------------------
+// Scoped delegation context
+// ---------------------------------------------------------------------------
+
+class ScopedPermissionContext extends PermissionContext {
+  private readonly _scope: Set<string>
+  constructor(roles: string[], engine: IPolicyEngine, scope: string[], opts?: Omit<ContextOptions, 'role' | 'roles'>) {
+    super(roles, engine, opts)
+    this._scope = new Set(scope)
+  }
+  can(permission: string, subjectOrCondition?: unknown, condition?: () => boolean): boolean {
+    if (!this._scope.has(permission)) return false
+    return super.can(permission, subjectOrCondition as unknown, condition)
+  }
+}
+
+function parseCSVLine(line: string): string[] {
+  const result: string[] = []
+  let cur = ''
+  let inQuotes = false
+  for (const ch of line) {
+    if (ch === '"') { inQuotes = !inQuotes }
+    else if (ch === ',' && !inQuotes) { result.push(cur); cur = '' }
+    else cur += ch
+  }
+  result.push(cur)
+  return result
+}
 
 export class PolicyEngine implements IPolicyEngine {
   private roles: Map<string, RoleDefinition>
@@ -127,11 +157,8 @@ export class PolicyEngine implements IPolicyEngine {
         }
         if (roleDef.groups) {
           for (const groupName of roleDef.groups) {
-            const groupPerms = this.groups.get(groupName)
-            if (groupPerms) {
-              for (const perm of groupPerms) {
-                effective.add(perm)
-              }
+            for (const perm of this.resolveGroup(groupName)) {
+              effective.add(perm)
             }
           }
         }
@@ -236,13 +263,31 @@ export class PolicyEngine implements IPolicyEngine {
    */
   defineGroup(name: string, permissions: string[]): this {
     for (const perm of permissions) {
-      if (!validatePermission(perm)) {
+      if (!perm.startsWith('@') && !validatePermission(perm)) {
         throw new InvalidPermissionError(perm)
       }
     }
     this.groups.set(name, [...permissions])
     this.invalidateCache()
     return this
+  }
+
+  private resolveGroup(name: string, visiting = new Set<string>()): string[] {
+    if (visiting.has(name)) {
+      throw new Error(`Circular group reference detected: ${[...visiting, name].join(' → ')}`)
+    }
+    const members = this.groups.get(name)
+    if (!members) return []
+    visiting.add(name)
+    const result: string[] = []
+    for (const m of members) {
+      if (m.startsWith('@')) {
+        result.push(...this.resolveGroup(m.slice(1), new Set(visiting)))
+      } else {
+        result.push(m)
+      }
+    }
+    return result
   }
 
   // ---------------------------------------------------------------------------
@@ -600,6 +645,46 @@ export class PolicyEngine implements IPolicyEngine {
     return new PermissionContext(validRoles, this, { ...opts, userId, tenantId })
   }
 
+  /**
+   * Creates a `PermissionContext` representing `targetRoles` acting on behalf
+   * of a delegating principal. If `scope` is provided, the context only grants
+   * permissions that are in the scope AND held by `targetRoles`.
+   *
+   * @throws {UnknownRoleError} If any of the provided roles is not registered.
+   */
+  delegate(
+    targetRoles: string | string[],
+    opts?: DelegateOptions & Omit<ContextOptions, 'role' | 'roles'>,
+  ): PermissionContext {
+    const roles = Array.isArray(targetRoles) ? targetRoles : [targetRoles]
+    for (const r of roles) {
+      if (!this.roles.has(r)) throw new UnknownRoleError(r)
+    }
+
+    if (opts?.scope !== undefined) {
+      return new ScopedPermissionContext(roles, this, opts.scope, opts)
+    }
+
+    return new PermissionContext(roles, this, opts)
+  }
+
+  /**
+   * Async variant of `delegate()` that fetches the target user's roles from the
+   * adapter before creating the delegated context.
+   *
+   * @throws {AdapterError} If no adapter is configured or it lacks user-role methods.
+   */
+  async delegateUser(
+    userId: string,
+    tenantId?: string,
+    opts?: DelegateOptions & Omit<ContextOptions, 'role' | 'roles' | 'userId' | 'tenantId'>,
+  ): Promise<PermissionContext> {
+    const adapter = this.requireUserAdapter()
+    const allRoles = await adapter.getUserRoles(userId, tenantId)
+    const validRoles = allRoles.filter((r) => this.roles.has(r))
+    return this.delegate(validRoles, { ...opts, userId, tenantId })
+  }
+
   // ---------------------------------------------------------------------------
   // Role mutation API
   // ---------------------------------------------------------------------------
@@ -774,12 +859,12 @@ export class PolicyEngine implements IPolicyEngine {
    * @throws {UnknownRoleError} If `roleName` is not registered in the engine.
    * @throws {AdapterError} If no adapter is configured or it lacks user-role support.
    */
-  async assignRole(userId: string, roleName: string, tenantId?: string): Promise<void> {
+  async assignRole(userId: string, roleName: string, tenantId?: string, options?: { expiresAt?: Date }): Promise<void> {
     if (!this.roles.has(roleName)) {
       throw new UnknownRoleError(roleName)
     }
     const adapter = this.requireUserAdapter()
-    await adapter.assignRole(userId, roleName, tenantId)
+    await adapter.assignRole(userId, roleName, tenantId, options)
     this.fireAudit({ action: 'user.assignRole', role: roleName, userId, tenantId })
   }
 
@@ -1020,6 +1105,61 @@ export class PolicyEngine implements IPolicyEngine {
       }
     }
 
+    return engine
+  }
+
+  /**
+   * Parses a CSV string into a `PolicyEngine`. The first row may optionally be
+   * a header row (`role,level,permissions,groups`) — it is detected and skipped
+   * automatically.
+   */
+  static fromCSV(csv: string, opts?: PolicyOptions): PolicyEngine {
+    const lines = csv.trim().split('\n').map(l => l.trim()).filter(Boolean)
+    if (lines.length === 0) return new PolicyEngine(opts)
+
+    const isHeader = /^role[,\s]/i.test(lines[0])
+    const dataLines = isHeader ? lines.slice(1) : lines
+
+    const roles: RoleDefinition[] = dataLines.map(line => {
+      const cols = parseCSVLine(line)
+      const name = cols[0]?.trim() ?? ''
+      const level = parseInt(cols[1] ?? '0', 10)
+      const permissions = (cols[2] ?? '').split(',').map(p => p.trim()).filter(Boolean)
+      const groups = (cols[3] ?? '').split(',').map(g => g.trim()).filter(Boolean)
+      return { name, level, permissions, ...(groups.length ? { groups } : {}) }
+    })
+
+    return new PolicyEngine({ ...opts, roles })
+  }
+
+  /**
+   * Serialises the current in-memory policy state to a CSV string.
+   * The first row is a header row: `role,level,permissions,groups`.
+   */
+  toCSV(): string {
+    const header = 'role,level,permissions,groups'
+    const rows = this.listRoles().map(r => {
+      const perms = r.permissions.join(',')
+      const groups = (r.groups ?? []).join(',')
+      return `${r.name},${r.level},"${perms}","${groups}"`
+    })
+    return [header, ...rows].join('\n')
+  }
+
+  /**
+   * Constructs a `PolicyEngine` from a bulk JSON payload. Accepts either:
+   * - A `RoleDefinition[]` array
+   * - A `PolicySnapshot` object (same shape as `toJSON()`)
+   *
+   * The argument may be a raw JSON string or an already-parsed object.
+   */
+  static fromBulkJSON(json: string | object, opts?: PolicyOptions): PolicyEngine {
+    const data = typeof json === 'string' ? JSON.parse(json) : json
+    if (Array.isArray(data)) {
+      return new PolicyEngine({ ...opts, roles: data as RoleDefinition[] })
+    }
+    // Assume PolicySnapshot shape
+    const engine = PolicyEngine.fromJSON(data as PolicySnapshot)
     return engine
   }
 }

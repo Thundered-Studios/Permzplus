@@ -2,7 +2,7 @@ import type { RoleDefinition } from './types'
 import { validatePermission } from './permissions'
 
 export interface ValidationIssue {
-  type: 'orphaned_group' | 'invalid_level' | 'duplicate_level' | 'invalid_permission'
+  type: 'orphaned_group' | 'invalid_level' | 'duplicate_level' | 'invalid_permission' | 'undefined_group_ref'
   role: string
   detail: string
 }
@@ -53,6 +53,17 @@ export function validate(
     for (const group of role.groups ?? []) {
       if (!knownGroups.has(group)) {
         issues.push({ type: 'orphaned_group', role: role.name, detail: `Role "${role.name}" references unknown group "${group}"` })
+      }
+    }
+  }
+
+  for (const [groupName, members] of Object.entries(groups ?? {})) {
+    for (const member of members) {
+      if (member.startsWith('@')) {
+        const refName = member.slice(1)
+        if (!knownGroups.has(refName)) {
+          issues.push({ type: 'undefined_group_ref', role: groupName, detail: `Group "${groupName}" references undefined group "@${refName}"` })
+        }
       }
     }
   }
