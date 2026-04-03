@@ -2,9 +2,9 @@
 
 **Role-based and attribute-based permissions for TypeScript/JavaScript.**
 
-*pst! You! Yeah you! Star the repo!*
-
 RBAC with hierarchical inheritance for simple checks. ABAC with MongoDB-style subject conditions and database query generation for complex, data-aware authorization — all in one zero-dependency library.
+
+*pst! You! Yeah you! Star the repo!*
 
 ```ts
 // Simple RBAC check
