@@ -406,7 +406,7 @@ If permzplus saves you time, help others find it:
 - **Write about it!** — blog posts, dev.to articles, or Stack Overflow answers go a long way
 - **Open issues or PRs!** — feedback and contributions make the library better for everyone
 
-The project is solo-maintained(by a 13 year old). Every mention help.
+The project is solo-maintained(by a 12 year old). Every mention helps!
 
 ---
 
