@@ -38,10 +38,14 @@ export default defineConfig({
   sourcemap: true,
   clean: true,
   splitting: false,
+  // Minify output — removes whitespace, mangles local identifiers, drops dead
+  // branches. Keeps the core index.js as small as possible on disk.
+  minify: true,
   // CJS → .cjs, ESM → .js (matches package.json "exports" expectations)
   outExtension({ format }) {
     return { js: format === 'cjs' ? '.cjs' : '.js' }
   },
-  // Treat UI framework peer deps as external
+  // Treat UI framework peer deps as external so they never bloat the core.
+  // All adapters are separate entry points; they cannot leak into index.js.
   external: ["react", "vue", "firebase"],
 });

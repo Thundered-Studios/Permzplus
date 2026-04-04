@@ -18,6 +18,32 @@ import type { SubjectCondition } from './conditions'
 import { evalCondition } from './conditions'
 
 // ---------------------------------------------------------------------------
+// Bitwise action flags — zero-allocation fast path for the four most common
+// permission actions. Stored as bitmasks alongside the Set-based permCache.
+// ---------------------------------------------------------------------------
+
+const A_READ   = 1 << 0   //  1
+const A_WRITE  = 1 << 1   //  2
+const A_DELETE = 1 << 2   //  4
+const A_CREATE = 1 << 3   //  8
+const A_ALL    = A_READ | A_WRITE | A_DELETE | A_CREATE  // 15
+
+/** Maps common action strings to their bit. Unknown actions are undefined. */
+const ACTION_BITS: Record<string, number | undefined> = {
+  read:   A_READ,
+  write:  A_WRITE,
+  delete: A_DELETE,
+  create: A_CREATE,
+}
+
+interface PermBits {
+  /** Bits from a bare `*` permission — applies to every resource. */
+  global: number
+  /** Per-resource bits from `resource:action` and `resource:*` patterns. */
+  res: Map<string, number>
+}
+
+// ---------------------------------------------------------------------------
 // Scoped delegation context
 // ---------------------------------------------------------------------------
 
@@ -62,6 +88,11 @@ export class PolicyEngine implements IPolicyEngine {
    */
   private checkCache: Map<string, boolean>
   /**
+   * Bitwise permission bitmasks per role, built alongside permCache.
+   * Enables O(1) checks for the four common actions without iterating the Set.
+   */
+  private permBitsCache: Map<string, PermBits>
+  /**
    * Per-rule subject conditions. Key: `"role\x00permission"`, value: array of
    * conditions registered via `defineRule()`.
    */
@@ -76,6 +107,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.auditLogger = options?.audit
     this.permCache = new Map()
     this.checkCache = new Map()
+    this.permBitsCache = new Map()
     this.ruleConditions = new Map()
 
     if (options?.roles) {
@@ -135,6 +167,7 @@ export class PolicyEngine implements IPolicyEngine {
   private invalidateCache(): void {
     this.permCache.clear()
     this.checkCache.clear()
+    this.permBitsCache.clear()
   }
 
   /**
@@ -212,6 +245,30 @@ export class PolicyEngine implements IPolicyEngine {
     }
 
     this.permCache.set(role, effective)
+
+    // Build bitwise layer for the four common actions — O(n) once per role per
+    // cache generation; after this, common-action checks are O(1) via bits.
+    const bits: PermBits = { global: 0, res: new Map() }
+    for (const perm of effective) {
+      if (perm === '*') {
+        bits.global |= A_ALL
+      } else {
+        const ci = perm.indexOf(':')
+        if (ci === -1) continue
+        const resource = perm.slice(0, ci)
+        const action   = perm.slice(ci + 1)
+        if (action === '*') {
+          bits.res.set(resource, (bits.res.get(resource) ?? 0) | A_ALL)
+        } else {
+          const bit = ACTION_BITS[action]
+          if (bit !== undefined) {
+            bits.res.set(resource, (bits.res.get(resource) ?? 0) | bit)
+          }
+        }
+      }
+    }
+    this.permBitsCache.set(role, bits)
+
     return effective
   }
 
@@ -355,17 +412,53 @@ export class PolicyEngine implements IPolicyEngine {
       throw new InvalidPermissionError(permission)
     }
 
-    // Hot-path cache: skip pattern matching for repeated subject-free calls.
-    // Key is a flat string — no JSON.stringify overhead.
-    if (subject === undefined && !this.debugMode) {
-      const cacheKey = ctx !== undefined
-        ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
-        : role + '\x00' + permission
+    // -----------------------------------------------------------------------
+    // Level 1 — check cache (O(1), covers all repeated subject-free calls).
+    // Key is a flat joined string — no JSON.stringify overhead.
+    // -----------------------------------------------------------------------
+    const noSubject = subject === undefined
+    const cacheKey = noSubject && !this.debugMode
+      ? (ctx !== undefined
+          ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
+          : role + '\x00' + permission)
+      : ''
+
+    if (cacheKey !== '') {
       const cached = this.checkCache.get(cacheKey)
       if (cached !== undefined) return cached
     }
 
+    // -----------------------------------------------------------------------
+    // Level 2 — resolve effective permissions (populates permCache +
+    // permBitsCache; O(n) only on the first call per role per generation).
+    // -----------------------------------------------------------------------
     const effective = this.resolveEffectivePermissions(role)
+
+    // -----------------------------------------------------------------------
+    // Level 3 — bitwise fast path for read / write / delete / create.
+    // When the action is one of the four common ones AND no ABAC subject is
+    // present, the bitmask answer is definitive — no Set iteration needed.
+    // -----------------------------------------------------------------------
+    if (noSubject && !this.debugMode) {
+      const ci = permission.indexOf(':')
+      if (ci !== -1) {
+        const bit = ACTION_BITS[permission.slice(ci + 1)]
+        if (bit !== undefined) {
+          const bits = this.permBitsCache.get(role)
+          if (bits !== undefined) {
+            const resource = permission.slice(0, ci)
+            const allowed  = (bits.global & bit) !== 0 || ((bits.res.get(resource) ?? 0) & bit) !== 0
+            this.checkCache.set(cacheKey, allowed)
+            return allowed
+          }
+        }
+      }
+    }
+
+    // -----------------------------------------------------------------------
+    // Level 4 — Set iteration (handles custom actions; also needed to find
+    // matchedPattern for ABAC condition lookup when a subject is present).
+    // -----------------------------------------------------------------------
     let matched = false
     let matchedPattern: string | undefined
     for (const pattern of effective) {
@@ -381,16 +474,13 @@ export class PolicyEngine implements IPolicyEngine {
         // eslint-disable-next-line no-console
         console.debug(`[permzplus] can("${role}", "${permission}") → false | No permission matching "${permission}" found for role "${role}"`)
       }
-      if (subject === undefined && !this.debugMode) {
-        const cacheKey = ctx !== undefined
-          ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
-          : role + '\x00' + permission
-        this.checkCache.set(cacheKey, false)
-      }
+      if (cacheKey !== '') this.checkCache.set(cacheKey, false)
       return false
     }
 
-    // Evaluate subject conditions if a subject was provided
+    // -----------------------------------------------------------------------
+    // Level 5 — ABAC subject conditions (AND semantics; all must pass).
+    // -----------------------------------------------------------------------
     if (subject !== undefined) {
       const conditions = this.getConditionsFor(role, matchedPattern ?? permission)
       if (conditions.length > 0) {
@@ -415,12 +505,7 @@ export class PolicyEngine implements IPolicyEngine {
       console.debug(`[permzplus] can("${role}", "${permission}") → true | ${reason}`)
     }
 
-    if (subject === undefined && !this.debugMode) {
-      const cacheKey = ctx !== undefined
-        ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
-        : role + '\x00' + permission
-      this.checkCache.set(cacheKey, true)
-    }
+    if (cacheKey !== '') this.checkCache.set(cacheKey, true)
     return true
   }
 
@@ -879,6 +964,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.get(role)!.add(permission)
 
     this.permCache.delete(role)
+    this.permBitsCache.delete(role)
     this.checkCache.clear()
     this.hooks.onDeny?.(role, permission)
     this.fireAudit({ action: 'permission.deny', role, permission })
@@ -905,6 +991,7 @@ export class PolicyEngine implements IPolicyEngine {
 
     this.denies.get(role)?.delete(permission)
     this.permCache.delete(role)
+    this.permBitsCache.delete(role)
     this.checkCache.clear()
     this.hooks.onRemoveDeny?.(role, permission)
     this.fireAudit({ action: 'permission.removeDeny', role, permission })

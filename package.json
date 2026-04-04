@@ -156,6 +156,7 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "bench": "tsx bench/speed-test.ts",
+    "bench:compare": "tsx bench/benchmark.ts",
     "lint": "eslint src tests",
     "lint:fix": "eslint src tests --fix",
     "format": "prettier --write .",
@@ -164,9 +165,11 @@
     "prepublishOnly": "pnpm build && pnpm test"
   },
   "devDependencies": {
+    "@casl/ability": "^6.8.0",
     "@types/react": "^19.2.14",
     "@typescript-eslint/eslint-plugin": "^7.0.0",
     "@typescript-eslint/parser": "^7.0.0",
+    "accesscontrol": "^2.2.1",
     "drizzle-orm": "^0.45.2",
     "eslint": "^8.57.0",
     "eslint-config-prettier": "^9.1.0",
