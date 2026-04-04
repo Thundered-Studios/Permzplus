@@ -66,14 +66,41 @@ createPermz<Action, Resource>({ name: 'MOD', level: 30 })
 
 ## Performance
 
-The resolver (`policy.can()`) uses a memoized permission set per role — built once on first access, cleared only on mutations. Repeated checks are a `Set.has()` lookup.
+The hot path uses a three-layer resolver:
 
-```
-1,000,000 permission checks — < 15 ms
-```
+1. **`checkCache`** — flat-string Map lookup for repeated subject-free calls (O(1))
+2. **Bitwise layer** — bitmask check for `read / write / delete / create` without iterating the permission Set (O(1))
+3. **Set iteration** — fallback for custom actions or ABAC subject conditions
 
-> Benchmark: Node 20, Apple M2. Policy with 10 roles, 50 permissions, hierarchical inheritance.
-> Source: [`src/policy.ts`](src/policy.ts) — `resolveEffectivePermissions()` + `permCache`.
+All three caches are invalidated atomically on any mutation.
+
+### vs. CASL and accesscontrol
+
+Benchmarked with [mitata](https://github.com/nicolo-ribaudo/mitata) on Node 22.16.0, Intel Core i7-1355U. Policy: 3 roles (VIEWER → EDITOR → ADMIN), 5 permissions, hierarchical inheritance. Cold-cache first call, then steady-state repeated calls.
+
+| Scenario | permzplus | CASL | accesscontrol |
+|---|---|---|---|
+| VIEWER read Post (allowed) | 411 ns | 223 ns | 2,550 ns |
+| EDITOR write Post (allowed) | 439 ns | 39 ns | 2,420 ns |
+| ADMIN wildcard delete (allowed) | 412 ns | 36 ns | 2,920 ns |
+| VIEWER delete Post (denied) | 426 ns | 35 ns | 1,900 ns |
+| **1,000,000 ops — total time** | **386 ms** | **30 ms** | **937 ms** |
+| **Throughput** | **~2.6M ops/sec** | **~33M ops/sec** | **~1.1M ops/sec** |
+
+permzplus is **2.4× faster than accesscontrol** on the allow path and **up to 4.5× faster on the deny path**, while offering hierarchical RBAC, ABAC conditions, audit logging, and query generation that neither library provides.
+
+CASL is faster for pure role checks. If you need only flat role checks with no hierarchy, ABAC, or query generation, CASL is an excellent choice. If you need the full stack, permzplus is the fastest option that covers it.
+
+### Bundle size
+
+| | permzplus | CASL | accesscontrol |
+|---|---|---|---|
+| Raw (minified) | **19.9 KB** | ~55 KB | ~35 KB |
+| Gzip | **5.9 KB** | ~15 KB | ~10 KB |
+| Dependencies | **0** | 3+ | 5+ |
+
+> Run the benchmark yourself: `pnpm bench:compare`
+> Source: [`bench/benchmark.ts`](bench/benchmark.ts)
 
 ---
 
@@ -511,7 +538,7 @@ If permzplus saves you time, help others find it:
 - **Write about it!** — blog posts, dev.to articles, or Stack Overflow answers go a long way
 - **Open issues or PRs!** — feedback and contributions make the library better for everyone
 
-The project is solo-maintained (by a 13 year old). Every mention helps.
+The project is solo-maintained (by a 12 year old). Every mention helps.
 
 ---
 

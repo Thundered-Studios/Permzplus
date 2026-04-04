@@ -146,7 +146,7 @@ bench('1_000_000 × accesscontrol.can (ADMIN, readAny Post)', () => {
 // Run
 // ---------------------------------------------------------------------------
 
-await run({
+void run({
   colors:      true,
   avg:         true,
   min_max:     true,
