@@ -16,6 +16,7 @@ import { validatePermission, matchesPermission } from './permissions'
 import { PermissionContext } from './context'
 import type { SubjectCondition } from './conditions'
 import { evalCondition } from './conditions'
+import { toBitmask as _toBitmask } from './bitmask'
 
 // ---------------------------------------------------------------------------
 // Bitwise action flags — zero-allocation fast path for the four most common
@@ -695,6 +696,32 @@ export class PolicyEngine implements IPolicyEngine {
    */
   getPermissions(role: string): string[] {
     return Array.from(this.resolveEffectivePermissions(role))
+  }
+
+  /**
+   * Serialises the current user's effective permission set into a compact
+   * base64url string suitable for cookies, JWTs, and React props.
+   *
+   * The encoded string can be decoded client-side or in Edge middleware with
+   * `fromBitmask()` from `permzplus/bitmask` — no engine import required.
+   *
+   * For multi-role arrays, the effective permissions are unioned before encoding.
+   *
+   * @param role - The role or array of roles to encode.
+   * @returns A base64url string. Pass to `fromBitmask()` to decode.
+   *
+   * @example
+   * ```ts
+   * // At login — store in a signed cookie
+   * const bitmask = policy.toBitmask(session.role)
+   * res.cookie('permz', bitmask, { httpOnly: true, sameSite: 'strict' })
+   *
+   * // Multi-role
+   * const bitmask = policy.toBitmask(['EDITOR', 'MODERATOR'])
+   * ```
+   */
+  toBitmask(role: string | string[]): string {
+    return _toBitmask(this, role)
   }
 
   // ---------------------------------------------------------------------------

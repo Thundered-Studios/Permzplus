@@ -26,6 +26,12 @@ export default defineConfig({
     // UI framework integrations
     "react": "src/react.ts",
     "vue": "src/vue.ts",
+    // Next.js App Router integration
+    "nextjs": "src/nextjs.ts",
+    "nextjs/client": "src/nextjs-client.ts",
+    "nextjs/middleware": "src/nextjs-middleware.ts",
+    // Bitmask serialization (shared, Edge-safe)
+    "bitmask": "src/bitmask.ts",
     // Query builder (ABAC → database WHERE clauses)
     "query": "src/query.ts",
     // Testing utilities (not included in main bundle)

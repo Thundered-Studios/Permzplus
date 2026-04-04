@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "description": "RBAC + ABAC permissions for TypeScript — hierarchical roles, MongoDB-style subject conditions, and database query generation",
   "keywords": [
     "permissions",
@@ -126,6 +126,26 @@
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js",
       "require": "./dist/react.cjs"
+    },
+    "./nextjs": {
+      "types": "./dist/nextjs.d.ts",
+      "import": "./dist/nextjs.js",
+      "require": "./dist/nextjs.cjs"
+    },
+    "./nextjs/client": {
+      "types": "./dist/nextjs-client.d.ts",
+      "import": "./dist/nextjs-client.js",
+      "require": "./dist/nextjs-client.cjs"
+    },
+    "./nextjs/middleware": {
+      "types": "./dist/nextjs-middleware.d.ts",
+      "import": "./dist/nextjs-middleware.js",
+      "require": "./dist/nextjs-middleware.cjs"
+    },
+    "./bitmask": {
+      "types": "./dist/bitmask.d.ts",
+      "import": "./dist/bitmask.js",
+      "require": "./dist/bitmask.cjs"
     },
     "./vue": {
       "types": "./dist/vue.d.ts",
