@@ -1,6 +1,6 @@
 {
   "name": "permzplus",
-  "version": "4.2.0",
+  "version": "4.3.0",
   "description": "RBAC + ABAC permissions for TypeScript — hierarchical roles, MongoDB-style subject conditions, and database query generation",
   "keywords": [
     "permissions",
@@ -147,6 +147,26 @@
       "import": "./dist/bitmask.js",
       "require": "./dist/bitmask.cjs"
     },
+    "./jwt": {
+      "types": "./dist/jwt.d.ts",
+      "import": "./dist/jwt.js",
+      "require": "./dist/jwt.cjs"
+    },
+    "./adapters/clerk": {
+      "types": "./dist/adapters/clerk.d.ts",
+      "import": "./dist/adapters/clerk.js",
+      "require": "./dist/adapters/clerk.cjs"
+    },
+    "./adapters/authjs": {
+      "types": "./dist/adapters/authjs.d.ts",
+      "import": "./dist/adapters/authjs.js",
+      "require": "./dist/adapters/authjs.cjs"
+    },
+    "./adapters/kysely": {
+      "types": "./dist/adapters/kysely.d.ts",
+      "import": "./dist/adapters/kysely.js",
+      "require": "./dist/adapters/kysely.cjs"
+    },
     "./vue": {
       "types": "./dist/vue.d.ts",
       "import": "./dist/vue.js",
@@ -213,6 +233,8 @@
     "mongoose": ">=7.0.0",
     "react": ">=18.0.0",
     "redis": ">=4.0.0",
+    "kysely": ">=0.27.0",
+    "next-auth": ">=4.0.0",
     "sequelize": ">=6.0.0",
     "typeorm": ">=0.3.0",
     "vue": ">=3.0.0"
@@ -249,6 +271,12 @@
       "optional": true
     },
     "knex": {
+      "optional": true
+    },
+    "kysely": {
+      "optional": true
+    },
+    "next-auth": {
       "optional": true
     },
     "sequelize": {

@@ -32,6 +32,12 @@ export default defineConfig({
     "nextjs/middleware": "src/nextjs-middleware.ts",
     // Bitmask serialization (shared, Edge-safe)
     "bitmask": "src/bitmask.ts",
+    // JWT private-claim helpers + Edge middleware guard
+    "jwt": "src/jwt.ts",
+    // Auth provider sync adapters
+    "adapters/clerk": "src/adapters/clerk.ts",
+    "adapters/authjs": "src/adapters/authjs.ts",
+    "adapters/kysely": "src/adapters/kysely.ts",
     // Query builder (ABAC → database WHERE clauses)
     "query": "src/query.ts",
     // Testing utilities (not included in main bundle)
