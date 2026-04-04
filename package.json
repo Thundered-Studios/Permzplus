@@ -20,7 +20,8 @@
     "nestjs",
     "prisma",
     "drizzle",
-    "mongoose"
+    "mongoose",
+    "caslbunz"
   ],
   "homepage": "https://github.com/Thundered-Studios/Permzplus#readme",
   "bugs": {
