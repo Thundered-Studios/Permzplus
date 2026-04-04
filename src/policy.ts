@@ -57,6 +57,11 @@ export class PolicyEngine implements IPolicyEngine {
   /** Cached resolved permission sets, keyed by role name. Cleared on any mutation. */
   private permCache: Map<string, Set<string>>
   /**
+   * Hot-path result cache for subject-free `can()` calls.
+   * Key: `"role\x00permission"`. Cleared on any mutation alongside permCache.
+   */
+  private checkCache: Map<string, boolean>
+  /**
    * Per-rule subject conditions. Key: `"role\x00permission"`, value: array of
    * conditions registered via `defineRule()`.
    */
@@ -70,6 +75,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.debugMode = options?.debug ?? false
     this.auditLogger = options?.audit
     this.permCache = new Map()
+    this.checkCache = new Map()
     this.ruleConditions = new Map()
 
     if (options?.roles) {
@@ -128,6 +134,30 @@ export class PolicyEngine implements IPolicyEngine {
   /** Clears the entire permission cache. Called on every mutation. */
   private invalidateCache(): void {
     this.permCache.clear()
+    this.checkCache.clear()
+  }
+
+  /**
+   * Builds a stable, flat cache key from a context object without JSON.stringify.
+   * Keys are sorted for determinism; values are coerced to strings.
+   */
+  private stableContextKey(ctx: Record<string, unknown>): string {
+    const keys = Object.keys(ctx)
+    if (keys.length === 0) return ''
+    keys.sort()
+    let key = ''
+    for (let i = 0; i < keys.length; i++) {
+      key += keys[i] + '=' + String(ctx[keys[i]]) + '\x01'
+    }
+    return key
+  }
+
+  /**
+   * Factory for PermissionCheckResult — ensures every returned object is
+   * allocated with the same property order so V8 assigns a single hidden class.
+   */
+  private static makeResult(result: boolean, reason: string): PermissionCheckResult {
+    return { result, reason }
   }
 
   /**
@@ -167,12 +197,17 @@ export class PolicyEngine implements IPolicyEngine {
 
     const denied = this.denies.get(role)
     if (denied) {
+      // Collect patterns to remove first to avoid mutating the Set mid-iteration.
+      const toRemove: string[] = []
       for (const deniedPerm of denied) {
-        for (const pattern of [...effective]) {
+        for (const pattern of effective) {
           if (matchesPermission(deniedPerm, pattern) || pattern === deniedPerm) {
-            effective.delete(pattern)
+            toRemove.push(pattern)
           }
         }
+      }
+      for (let i = 0; i < toRemove.length; i++) {
+        effective.delete(toRemove[i])
       }
     }
 
@@ -320,6 +355,16 @@ export class PolicyEngine implements IPolicyEngine {
       throw new InvalidPermissionError(permission)
     }
 
+    // Hot-path cache: skip pattern matching for repeated subject-free calls.
+    // Key is a flat string — no JSON.stringify overhead.
+    if (subject === undefined && !this.debugMode) {
+      const cacheKey = ctx !== undefined
+        ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
+        : role + '\x00' + permission
+      const cached = this.checkCache.get(cacheKey)
+      if (cached !== undefined) return cached
+    }
+
     const effective = this.resolveEffectivePermissions(role)
     let matched = false
     let matchedPattern: string | undefined
@@ -336,6 +381,12 @@ export class PolicyEngine implements IPolicyEngine {
         // eslint-disable-next-line no-console
         console.debug(`[permzplus] can("${role}", "${permission}") → false | No permission matching "${permission}" found for role "${role}"`)
       }
+      if (subject === undefined && !this.debugMode) {
+        const cacheKey = ctx !== undefined
+          ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
+          : role + '\x00' + permission
+        this.checkCache.set(cacheKey, false)
+      }
       return false
     }
 
@@ -343,7 +394,13 @@ export class PolicyEngine implements IPolicyEngine {
     if (subject !== undefined) {
       const conditions = this.getConditionsFor(role, matchedPattern ?? permission)
       if (conditions.length > 0) {
-        const conditionsMet = conditions.every((c) => evalCondition(c, subject, ctx))
+        let conditionsMet = true
+        for (let i = 0; i < conditions.length; i++) {
+          if (!evalCondition(conditions[i], subject, ctx)) {
+            conditionsMet = false
+            break
+          }
+        }
         if (this.debugMode) {
           // eslint-disable-next-line no-console
           console.debug(`[permzplus] can("${role}", "${permission}") → ${conditionsMet} | Conditions ${conditionsMet ? 'passed' : 'failed'} for subject`)
@@ -358,6 +415,12 @@ export class PolicyEngine implements IPolicyEngine {
       console.debug(`[permzplus] can("${role}", "${permission}") → true | ${reason}`)
     }
 
+    if (subject === undefined && !this.debugMode) {
+      const cacheKey = ctx !== undefined
+        ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
+        : role + '\x00' + permission
+      this.checkCache.set(cacheKey, true)
+    }
     return true
   }
 
@@ -449,51 +512,51 @@ export class PolicyEngine implements IPolicyEngine {
     if (denied) {
       for (const deniedPerm of denied) {
         if (matchesPermission(permission, deniedPerm) || deniedPerm === permission) {
-          return {
-            result: false,
-            reason: `Permission "${permission}" is explicitly denied for role "${role}"`,
-          }
+          return PolicyEngine.makeResult(false, `Permission "${permission}" is explicitly denied for role "${role}"`)
         }
       }
     }
 
     const roleDef = this.roles.get(role)!
-    const sortedRoles = Array.from(this.roles.values())
-      .filter((r) => r.level <= roleDef.level)
-      .sort((a, b) => a.level - b.level)
+    const maxLevel = roleDef.level
 
-    for (const source of sortedRoles) {
-      for (const pattern of source.permissions) {
+    // Collect eligible roles without .filter()/.sort() array allocations.
+    // Two-pass: first collect, then sort in place.
+    const eligible: RoleDefinition[] = []
+    for (const r of this.roles.values()) {
+      if (r.level <= maxLevel) eligible.push(r)
+    }
+    eligible.sort((a, b) => a.level - b.level)
+
+    for (let si = 0; si < eligible.length; si++) {
+      const source = eligible[si]
+      const perms = source.permissions
+      for (let pi = 0; pi < perms.length; pi++) {
+        const pattern = perms[pi]
         if (matchesPermission(permission, pattern)) {
           const via = pattern !== permission ? ` via "${pattern}"` : ''
           const inherited = source.name !== role ? ` (inherited from "${source.name}")` : ''
-          return {
-            result: true,
-            reason: `Permission "${permission}" granted${via} to role "${source.name}"${inherited}`,
-          }
+          return PolicyEngine.makeResult(true, `Permission "${permission}" granted${via} to role "${source.name}"${inherited}`)
         }
       }
       if (source.groups) {
-        for (const groupName of source.groups) {
-          const groupPerms = this.groups.get(groupName) ?? []
-          for (const pattern of groupPerms) {
+        for (let gi = 0; gi < source.groups.length; gi++) {
+          const groupName = source.groups[gi]
+          const groupPerms = this.groups.get(groupName)
+          if (!groupPerms) continue
+          for (let gpi = 0; gpi < groupPerms.length; gpi++) {
+            const pattern = groupPerms[gpi]
             if (matchesPermission(permission, pattern)) {
               const via = pattern !== permission ? ` via "${pattern}"` : ''
               const inherited = source.name !== role ? ` (inherited from "${source.name}")` : ''
-              return {
-                result: true,
-                reason: `Permission "${permission}" granted${via} through group "${groupName}" on role "${source.name}"${inherited}`,
-              }
+              return PolicyEngine.makeResult(true, `Permission "${permission}" granted${via} through group "${groupName}" on role "${source.name}"${inherited}`)
             }
           }
         }
       }
     }
 
-    return {
-      result: false,
-      reason: `No permission matching "${permission}" found for role "${role}"`,
-    }
+    return PolicyEngine.makeResult(false, `No permission matching "${permission}" found for role "${role}"`)
   }
 
   // ---------------------------------------------------------------------------
@@ -816,6 +879,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.get(role)!.add(permission)
 
     this.permCache.delete(role)
+    this.checkCache.clear()
     this.hooks.onDeny?.(role, permission)
     this.fireAudit({ action: 'permission.deny', role, permission })
     this.fireAndForget(this.adapter?.saveDeny(role, permission), 'saveDeny')
@@ -841,6 +905,7 @@ export class PolicyEngine implements IPolicyEngine {
 
     this.denies.get(role)?.delete(permission)
     this.permCache.delete(role)
+    this.checkCache.clear()
     this.hooks.onRemoveDeny?.(role, permission)
     this.fireAudit({ action: 'permission.removeDeny', role, permission })
     this.fireAndForget(this.adapter?.removeDeny(role, permission), 'removeDeny')
