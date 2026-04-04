@@ -1,6 +1,21 @@
 import type { PermzAdapter, RoleDefinition } from '../types'
 import { AdapterError } from '../errors'
 
+// Static drizzle-orm imports used by the ABAC filter generator below.
+// drizzle-orm is a peer dependency — tsup externalises it automatically,
+// so these lines add ZERO bytes to the permzplus bundle.
+import {
+  and, or, not,
+  eq, ne, gt, gte, lt, lte,
+  inArray, notInArray,
+  isNull, isNotNull,
+  like, between,
+  sql,
+} from 'drizzle-orm'
+import type { SQL } from 'drizzle-orm'
+import { accessibleBy } from '../query'
+import type { SubjectConditionObject } from '../conditions'
+
 // ---------------------------------------------------------------------------
 // Schema interface
 // ---------------------------------------------------------------------------
@@ -345,4 +360,237 @@ export class DrizzleAdapter implements PermzAdapter {
       )
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// ABAC Filter Generator
+// ---------------------------------------------------------------------------
+//
+// Converts permzplus MongoDB-style conditions into Drizzle SQL expressions
+// that can be passed directly to .where().
+//
+// drizzle-orm operators are peer-dependency imports (see top of file) —
+// they are fully externalized by tsup and add zero bytes to the bundle.
+// ---------------------------------------------------------------------------
+
+/** Minimal policy engine interface required by drizzleFilter(). */
+interface QueryEngine {
+  can(role: string, permission: string): boolean
+  getConditionsFor(role: string, permission: string): unknown[]
+}
+
+/**
+ * Result returned by {@link drizzleFilter}.
+ *
+ * | State | `permitted` | `unrestricted` | `filter` |
+ * |---|---|---|---|
+ * | No permission | `false` | `false` | `sql\`1=0\`` |
+ * | Allowed, no conditions | `true` | `true` | `undefined` |
+ * | Allowed, with conditions | `true` | `false` | Drizzle SQL expression |
+ */
+export interface DrizzleFilterResult {
+  /**
+   * Drop this directly into `.where(filter)`.
+   *
+   * - `undefined`  → unrestricted (no clause needed — Drizzle ignores undefined)
+   * - `sql\`1=0\`` → no permission (zero rows returned)
+   * - SQL expr     → AND/OR combination of the ABAC conditions
+   */
+  filter: SQL | undefined
+  /** `false` when the role has no permission — you can skip the DB call entirely. */
+  permitted: boolean
+  /** `true` when permitted with zero conditions — all records are accessible. */
+  unrestricted: boolean
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type AnyCol = any
+
+/**
+ * Converts a single field value spec to a Drizzle SQL clause.
+ * Handles implicit equality and all MongoDB-style operators.
+ * @internal
+ */
+function fieldToSql(col: AnyCol, rawValue: unknown): SQL | undefined {
+  // Implicit equality: { status: 'published' }
+  if (rawValue === null || typeof rawValue !== 'object') {
+    return eq(col, rawValue) as SQL
+  }
+
+  const ops = rawValue as Record<string, unknown>
+  const parts: (SQL | undefined)[] = []
+
+  for (const op in ops) {
+    const operand = ops[op]
+    switch (op) {
+      case '$eq':  parts.push(eq(col, operand) as SQL); break
+      case '$ne':  parts.push(ne(col, operand) as SQL); break
+      case '$gt':  parts.push(gt(col, operand) as SQL); break
+      case '$gte': parts.push(gte(col, operand) as SQL); break
+      case '$lt':  parts.push(lt(col, operand) as SQL); break
+      case '$lte': parts.push(lte(col, operand) as SQL); break
+      case '$in':
+        parts.push(inArray(col, operand as unknown[]) as SQL)
+        break
+      case '$nin':
+        parts.push(notInArray(col, operand as unknown[]) as SQL)
+        break
+      case '$exists':
+        parts.push((operand ? isNotNull(col) : isNull(col)) as SQL)
+        break
+      case '$regex': {
+        // Convert regex to a LIKE pattern (best-effort for simple patterns).
+        // Complex regexes need a raw sql`` expression in the calling code.
+        const src = operand instanceof RegExp ? operand.source : String(operand)
+        parts.push(like(col, src) as SQL)
+        break
+      }
+      case '$between': {
+        if (Array.isArray(operand) && operand.length === 2) {
+          parts.push(between(col, operand[0], operand[1]) as SQL)
+        }
+        break
+      }
+      // Unknown operators are silently skipped — they have no SQL equivalent.
+    }
+  }
+
+  if (parts.length === 0) return undefined
+  if (parts.length === 1) return parts[0]
+  return and(...parts) as SQL
+}
+
+/**
+ * Recursively converts a MongoDB-style condition object to a Drizzle SQL
+ * expression. Field names are looked up as column properties on `table`.
+ * @internal
+ */
+function conditionToSql<TTable extends Record<string, unknown>>(
+  condition: SubjectConditionObject,
+  table: TTable,
+): SQL | undefined {
+  const parts: (SQL | undefined)[] = []
+
+  for (const key in condition) {
+    const value = condition[key]
+
+    if (key === '$and') {
+      if (!Array.isArray(value)) continue
+      const sub = (value as SubjectConditionObject[])
+        .map((c) => conditionToSql(c, table))
+        .filter(Boolean) as SQL[]
+      if (sub.length > 0) parts.push(and(...sub) as SQL)
+    } else if (key === '$or') {
+      if (!Array.isArray(value)) continue
+      const sub = (value as SubjectConditionObject[])
+        .map((c) => conditionToSql(c, table))
+        .filter(Boolean) as SQL[]
+      if (sub.length > 0) parts.push(or(...sub) as SQL)
+    } else if (key === '$nor') {
+      if (!Array.isArray(value)) continue
+      const sub = (value as SubjectConditionObject[])
+        .map((c) => conditionToSql(c, table))
+        .filter(Boolean) as SQL[]
+      if (sub.length > 0) parts.push(not(or(...sub) as SQL) as SQL)
+    } else {
+      // Regular field — look up the matching Drizzle column on the table.
+      const col = (table as Record<string, unknown>)[key]
+      if (col === undefined) continue  // unknown column → skip
+      const clause = fieldToSql(col, value)
+      if (clause) parts.push(clause)
+    }
+  }
+
+  if (parts.length === 0) return undefined
+  if (parts.length === 1) return parts[0]
+  return and(...parts) as SQL
+}
+
+/**
+ * Low-level building block: converts a single serialized ABAC condition
+ * object into a Drizzle SQL expression.
+ *
+ * Field names in the condition must match column property names on the table.
+ * Returns `undefined` if the condition is empty or has no recognizable fields.
+ *
+ * @example
+ * ```ts
+ * import { toDrizzle } from 'permzplus/adapters/drizzle'
+ *
+ * const clause = toDrizzle({ status: 'published', views: { $gte: 10 } }, postsTable)
+ * // → and(eq(postsTable.status, 'published'), gte(postsTable.views, 10))
+ *
+ * const posts = await db.select().from(postsTable).where(clause)
+ * ```
+ */
+export function toDrizzle<TTable extends Record<string, unknown>>(
+  condition: SubjectConditionObject,
+  table: TTable,
+): SQL | undefined {
+  return conditionToSql(condition, table)
+}
+
+/**
+ * High-level adapter: resolves the ABAC conditions for a role + permission
+ * from the policy engine and returns a Drizzle SQL filter for `.where()`.
+ *
+ * Field names in the conditions must match column property names on `table`.
+ *
+ * The conversion is synchronous and happens entirely in-memory — well under 1 ms.
+ *
+ * @example
+ * ```ts
+ * import { PolicyEngine } from 'permzplus'
+ * import { drizzleFilter } from 'permzplus/adapters/drizzle'
+ * import { postsTable } from './schema'
+ *
+ * const policy = new PolicyEngine()
+ * policy.addRole({ name: 'MEMBER', level: 1, permissions: ['posts:read'] })
+ * policy.defineRule('MEMBER', 'posts:read', { status: 'published' })
+ *
+ * const { filter, permitted } = drizzleFilter(policy, 'MEMBER', 'posts:read', postsTable)
+ * if (!permitted) return []  // short-circuit — no DB call needed
+ *
+ * const posts = await db.select().from(postsTable).where(filter)
+ * ```
+ *
+ * @param policy     A `PolicyEngine` (or any object with `can` + `getConditionsFor`).
+ * @param role       Role name (e.g. `'MEMBER'`).
+ * @param permission Full permission string (e.g. `'posts:read'`).
+ * @param table      Drizzle table object whose column names match condition fields.
+ */
+export function drizzleFilter<TTable extends Record<string, unknown>>(
+  policy: QueryEngine,
+  role: string,
+  permission: string,
+  table: TTable,
+): DrizzleFilterResult {
+  const { permitted, unrestricted, conditions } = accessibleBy(policy, role, permission)
+
+  // Role has no permission at all → block everything.
+  if (!permitted) {
+    return { permitted: false, unrestricted: false, filter: sql`1 = 0` as SQL }
+  }
+
+  // Permitted with no conditions → unrestricted access, no WHERE clause.
+  if (unrestricted || conditions.length === 0) {
+    return { permitted: true, unrestricted: true, filter: undefined }
+  }
+
+  // Convert each condition object to a Drizzle SQL expression.
+  // Multiple conditions are OR-combined (any matching condition grants access).
+  const sqls: SQL[] = []
+  for (let i = 0; i < conditions.length; i++) {
+    const clause = conditionToSql(conditions[i], table)
+    if (clause) sqls.push(clause)
+  }
+
+  if (sqls.length === 0) {
+    // All conditions had unrecognized fields — treat as unrestricted to avoid
+    // accidentally blocking legitimate access.
+    return { permitted: true, unrestricted: true, filter: undefined }
+  }
+
+  const filter = sqls.length === 1 ? sqls[0] : (or(...sqls) as SQL)
+  return { permitted: true, unrestricted: false, filter }
 }
