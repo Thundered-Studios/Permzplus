@@ -76,20 +76,28 @@ All three caches are invalidated atomically on any mutation.
 
 ### vs. CASL and accesscontrol
 
-Benchmarked with [mitata](https://github.com/nicolo-ribaudo/mitata) on Node 22.16.0, Intel Core i7-1355U. Policy: 3 roles (VIEWER → EDITOR → ADMIN), 5 permissions, hierarchical inheritance. Cold-cache first call, then steady-state repeated calls.
+Benchmarked with [mitata](https://github.com/nicolo-ribaudo/mitata) on Node 22.16.0, Intel Core i7-1355U. Policy: 3 roles (VIEWER → EDITOR → ADMIN), hierarchical inheritance. Steady-state (cache warm).
 
 | Scenario | permzplus | CASL | accesscontrol |
 |---|---|---|---|
-| VIEWER read Post (allowed) | 411 ns | 223 ns | 2,550 ns |
-| EDITOR write Post (allowed) | 439 ns | 39 ns | 2,420 ns |
-| ADMIN wildcard delete (allowed) | 412 ns | 36 ns | 2,920 ns |
-| VIEWER delete Post (denied) | 426 ns | 35 ns | 1,900 ns |
-| **1,000,000 ops — total time** | **386 ms** | **30 ms** | **937 ms** |
-| **Throughput** | **~2.6M ops/sec** | **~33M ops/sec** | **~1.1M ops/sec** |
+| VIEWER read Post (allowed) | **10.6 ns** | 12.2 ns | 447 ns |
+| EDITOR write Post (allowed) | **8.4 ns** | 14.4 ns | 742 ns |
+| ADMIN wildcard delete (allowed) | **10.1 ns** | 10.7 ns | 837 ns |
+| VIEWER delete Post (denied) | **10.4 ns** | 12.4 ns | 580 ns |
+| **1,000,000 ops — total time** | **11.9 ms** | 14.8 ms | 1,690 ms |
+| **Throughput** | **~84M ops/sec** | ~67M ops/sec | ~590K ops/sec |
 
-permzplus is **2.4× faster than accesscontrol** on the allow path and **up to 4.5× faster on the deny path**, while offering hierarchical RBAC, ABAC conditions, audit logging, and query generation that neither library provides.
+permzplus is **1.1–1.7× faster than CASL** and **42–89× faster than accesscontrol** across all scenarios, while offering hierarchical RBAC, ABAC conditions, audit logging, and query generation that neither library provides.
 
-CASL is faster for pure role checks. If you need only flat role checks with no hierarchy, ABAC, or query generation, CASL is an excellent choice. If you need the full stack, permzplus is the fastest option that covers it.
+### How it's this fast
+
+The hot path is a two-level Map lookup — **zero string allocation, zero regex**:
+
+```
+checkCache.get(role)?.get(permission)  →  return boolean
+```
+
+Cache entries are only written on the first call per `(role, permission)` pair (a cache miss). Every subsequent call costs exactly two hash-map lookups and a branch — nothing else is touched.
 
 ### Bundle size
 

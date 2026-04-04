@@ -83,10 +83,12 @@ export class PolicyEngine implements IPolicyEngine {
   /** Cached resolved permission sets, keyed by role name. Cleared on any mutation. */
   private permCache: Map<string, Set<string>>
   /**
-   * Hot-path result cache for subject-free `can()` calls.
-   * Key: `"role\x00permission"`. Cleared on any mutation alongside permCache.
+   * Two-level hot-path cache for subject-free, context-free `can()` calls.
+   * Outer key: role name. Inner key: permission string.
+   * Two Map.get() calls with zero string allocation — no key concatenation.
+   * Cleared on any mutation. Targeted delete by role in denyFrom/removeDeny.
    */
-  private checkCache: Map<string, boolean>
+  private checkCache: Map<string, Map<string, boolean>>
   /**
    * Bitwise permission bitmasks per role, built alongside permCache.
    * Enables O(1) checks for the four common actions without iterating the Set.
@@ -405,28 +407,25 @@ export class PolicyEngine implements IPolicyEngine {
    * @throws {InvalidPermissionError} If the permission string is malformed.
    */
   can(role: string, permission: string, subject?: unknown, ctx?: Record<string, unknown>): boolean {
-    if (!this.roles.has(role)) {
-      throw new UnknownRoleError(role)
-    }
-    if (!validatePermission(permission)) {
-      throw new InvalidPermissionError(permission)
+    // -----------------------------------------------------------------------
+    // Level 1 — two-level Map lookup. ZERO string allocation, ZERO regex.
+    // This is the only code that runs on the overwhelming majority of calls.
+    // We intentionally check cache before validation: entries only exist if
+    // they were written by a prior validated call, so correctness is intact.
+    // -----------------------------------------------------------------------
+    if (subject === undefined && ctx === undefined && !this.debugMode) {
+      const roleCache = this.checkCache.get(role)
+      if (roleCache !== undefined) {
+        const cached = roleCache.get(permission)
+        if (cached !== undefined) return cached
+      }
     }
 
     // -----------------------------------------------------------------------
-    // Level 1 — check cache (O(1), covers all repeated subject-free calls).
-    // Key is a flat joined string — no JSON.stringify overhead.
+    // Slow path (cache miss / debug / subject / ctx) — validate once.
     // -----------------------------------------------------------------------
-    const noSubject = subject === undefined
-    const cacheKey = noSubject && !this.debugMode
-      ? (ctx !== undefined
-          ? role + '\x00' + permission + '\x00' + this.stableContextKey(ctx)
-          : role + '\x00' + permission)
-      : ''
-
-    if (cacheKey !== '') {
-      const cached = this.checkCache.get(cacheKey)
-      if (cached !== undefined) return cached
-    }
+    if (!this.roles.has(role)) throw new UnknownRoleError(role)
+    if (!validatePermission(permission)) throw new InvalidPermissionError(permission)
 
     // -----------------------------------------------------------------------
     // Level 2 — resolve effective permissions (populates permCache +
@@ -436,10 +435,10 @@ export class PolicyEngine implements IPolicyEngine {
 
     // -----------------------------------------------------------------------
     // Level 3 — bitwise fast path for read / write / delete / create.
-    // When the action is one of the four common ones AND no ABAC subject is
-    // present, the bitmask answer is definitive — no Set iteration needed.
+    // Definitive O(1) answer for common actions; no Set iteration needed.
+    // Only used when there is no ABAC subject (matchedPattern not required).
     // -----------------------------------------------------------------------
-    if (noSubject && !this.debugMode) {
+    if (subject === undefined && !this.debugMode) {
       const ci = permission.indexOf(':')
       if (ci !== -1) {
         const bit = ACTION_BITS[permission.slice(ci + 1)]
@@ -448,7 +447,12 @@ export class PolicyEngine implements IPolicyEngine {
           if (bits !== undefined) {
             const resource = permission.slice(0, ci)
             const allowed  = (bits.global & bit) !== 0 || ((bits.res.get(resource) ?? 0) & bit) !== 0
-            this.checkCache.set(cacheKey, allowed)
+            // Write to two-level cache (ctx calls skip this branch)
+            if (ctx === undefined) {
+              let roleCache = this.checkCache.get(role)
+              if (roleCache === undefined) { roleCache = new Map(); this.checkCache.set(role, roleCache) }
+              roleCache.set(permission, allowed)
+            }
             return allowed
           }
         }
@@ -456,8 +460,7 @@ export class PolicyEngine implements IPolicyEngine {
     }
 
     // -----------------------------------------------------------------------
-    // Level 4 — Set iteration (handles custom actions; also needed to find
-    // matchedPattern for ABAC condition lookup when a subject is present).
+    // Level 4 — Set iteration (custom actions; matchedPattern for ABAC).
     // -----------------------------------------------------------------------
     let matched = false
     let matchedPattern: string | undefined
@@ -474,7 +477,11 @@ export class PolicyEngine implements IPolicyEngine {
         // eslint-disable-next-line no-console
         console.debug(`[permzplus] can("${role}", "${permission}") → false | No permission matching "${permission}" found for role "${role}"`)
       }
-      if (cacheKey !== '') this.checkCache.set(cacheKey, false)
+      if (subject === undefined && ctx === undefined && !this.debugMode) {
+        let roleCache = this.checkCache.get(role)
+        if (roleCache === undefined) { roleCache = new Map(); this.checkCache.set(role, roleCache) }
+        roleCache.set(permission, false)
+      }
       return false
     }
 
@@ -505,7 +512,11 @@ export class PolicyEngine implements IPolicyEngine {
       console.debug(`[permzplus] can("${role}", "${permission}") → true | ${reason}`)
     }
 
-    if (cacheKey !== '') this.checkCache.set(cacheKey, true)
+    if (subject === undefined && ctx === undefined && !this.debugMode) {
+      let roleCache = this.checkCache.get(role)
+      if (roleCache === undefined) { roleCache = new Map(); this.checkCache.set(role, roleCache) }
+      roleCache.set(permission, true)
+    }
     return true
   }
 
@@ -965,7 +976,7 @@ export class PolicyEngine implements IPolicyEngine {
 
     this.permCache.delete(role)
     this.permBitsCache.delete(role)
-    this.checkCache.clear()
+    this.checkCache.delete(role)
     this.hooks.onDeny?.(role, permission)
     this.fireAudit({ action: 'permission.deny', role, permission })
     this.fireAndForget(this.adapter?.saveDeny(role, permission), 'saveDeny')
@@ -992,7 +1003,7 @@ export class PolicyEngine implements IPolicyEngine {
     this.denies.get(role)?.delete(permission)
     this.permCache.delete(role)
     this.permBitsCache.delete(role)
-    this.checkCache.clear()
+    this.checkCache.delete(role)
     this.hooks.onRemoveDeny?.(role, permission)
     this.fireAudit({ action: 'permission.removeDeny', role, permission })
     this.fireAndForget(this.adapter?.removeDeny(role, permission), 'removeDeny')
